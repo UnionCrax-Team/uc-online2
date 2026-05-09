@@ -59,7 +59,7 @@ jobs:
           New-Item -ItemType Directory -Path "$packageRoot/x64" -Force | Out-Null
 
           Copy-Item "build/x86/uc_online2_core.dll" "$packageRoot/x86/uc_online2_core.dll"
-          Copy-Item "build/x64/uc_online2_core.dll" "$packageRoot/x64/uc_online2_core64.dll"
+          Copy-Item "build/x64/uc_online2_core64.dll" "$packageRoot/x64/uc_online2_core64.dll"
           Copy-Item "build/x86/steam_api.dll" "$packageRoot/x86/steam_api.dll"
           Copy-Item "build/x64/steam_api64.dll" "$packageRoot/x64/steam_api64.dll"
 
