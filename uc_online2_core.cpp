@@ -13,7 +13,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-
+#include <DbgHelp.h>
 
 // ============================================================
 // Core DLL globals (these are private to this DLL)

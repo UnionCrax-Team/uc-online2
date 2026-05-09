@@ -1,5 +1,6 @@
 #include <Windows.h>
 #include <Shlwapi.h>
+#include <DbgHelp.h>
 #include <new.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -92,35 +93,96 @@ uintp g_CtxCounter = 0;
 
 static UC_Core_Init_t g_pfnCoreInit = nullptr;
 static UC_Core_Shutdown_t g_pfnCoreShutdown = nullptr;
+
+#ifdef _DEBUG
+CDumpHandler::CDumpHandler() : m_bReady(false)
+{
+    InitializeSRWLock(&m_Lock);
+    m_hDbgHelp = LoadLibraryA("dbghelp.dll");
+    if (m_hDbgHelp)
+    {
+        m_pfnWriteDump = (Fn_MiniDumpWriteDump)GetProcAddress(m_hDbgHelp, "MiniDumpWriteDump");
+        m_bReady = (m_pfnWriteDump != nullptr);
+    }
+}
+
+CDumpHandler::~CDumpHandler()
+{
+    if (m_hDbgHelp)
+        FreeLibrary(m_hDbgHelp);
+}
+
+bool CDumpHandler::IsReady()
+{
+    return m_bReady;
+}
+
+void CDumpHandler::SetComment(const wchar_t* comment)
+{
+    if (comment)
+        m_Comment = comment;
+}
+
+size_t CDumpHandler::GetCommentByteSize()
+{
+    return m_Comment.size() * sizeof(wchar_t);
+}
+
+const wchar_t* CDumpHandler::GetComment()
+{
+    return m_Comment.c_str();
+}
+
+void CDumpHandler::ClearComment()
+{
+    m_Comment.clear();
+}
+
+void CDumpHandler::WriteDump(DWORD exceptionCode, _EXCEPTION_POINTERS* pExceptionInfo)
+{
+    if (!m_bReady || !m_pfnWriteDump)
+        return;
+
+    char dumpPath[MAX_PATH];
+    GetTempPathA(MAX_PATH, dumpPath);
+    char timestamp[32];
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    sprintf_s(timestamp, "%04d%02d%02d_%02d%02d%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    strcat_s(dumpPath, "uc_online2_");
+    strcat_s(dumpPath, timestamp);
+    strcat_s(dumpPath, ".dmp");
+
+    HANDLE hFile = CreateFileA(dumpPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE)
+        return;
+
+    MINIDUMP_EXCEPTION_INFORMATION mei = { 0 };
+    mei.ThreadId = GetCurrentThreadId();
+    mei.ExceptionPointers = pExceptionInfo;
+    mei.ClientPointers = FALSE;
+
+    MINIDUMP_USER_STREAM_INFORMATION musi = { 0 };
+    MINIDUMP_USER_STREAM commentStream = { 0 };
+    if (!m_Comment.empty())
+    {
+        commentStream.Type = CommentStreamA;
+        commentStream.BufferSize = (ULONG)m_Comment.size() * sizeof(wchar_t);
+        commentStream.Buffer = (void*)m_Comment.c_str();
+        musi.UserStreamArray = &commentStream;
+        musi.UserStreamCount = 1;
+    }
+
+    m_pfnWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile, MiniDumpNormal, &mei, &musi, nullptr);
+    CloseHandle(hFile);
+
+    UCOLOG("[UCOnline2] Crash dump written: %s", dumpPath);
+}
+#endif
+
 bool GetSteamPathFromRegistry(char* outPath, size_t pathSize)
 {
-    // First try the hardcoded common Steam installation path
-    const char* hardcodedPath = "C:\\Program Files (x86)\\Steam";
-    if (strlen(hardcodedPath) < pathSize)
-    {
-        strcpy_s(outPath, pathSize, hardcodedPath);
-        
-        // Verify the path exists and contains Steam executable
-        char steamExePath[MAX_PATH];
-        _snprintf_s(steamExePath, MAX_PATH, _TRUNCATE, "%s\\Steam.exe", hardcodedPath);
-        
-        if (GetFileAttributesA(steamExePath) != INVALID_FILE_ATTRIBUTES)
-        {
-            // Ensure null-termination
-            outPath[pathSize - 1] = '\0';
-            
-            // Remove trailing backslash if present
-            size_t len = strlen(outPath);
-            if (len > 0 && (outPath[len-1] == '\\' || outPath[len-1] == '/'))
-            {
-                outPath[len-1] = '\0';
-            }
-            
-            return true;
-        }
-    }
-    
-    // Fallback to registry detection
+    // Try registry detection first
     HKEY hKey = nullptr;
     LONG result;
     
@@ -145,7 +207,7 @@ bool GetSteamPathFromRegistry(char* outPath, size_t pathSize)
     {
         return false;
     }
-
+    
     DWORD type = 0;
     DWORD size = (DWORD)pathSize;
     
@@ -160,14 +222,21 @@ bool GetSteamPathFromRegistry(char* outPath, size_t pathSize)
     }
     
     RegCloseKey(hKey);
-
+    
     if (result != ERROR_SUCCESS || type != REG_SZ)
     {
         return false;
     }
-
+    
     // Ensure null-termination
     outPath[pathSize - 1] = '\0';
+    
+    // Validate the path exists
+    DWORD attrs = GetFileAttributesA(outPath);
+    if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY))
+    {
+        return false;
+    }
     
     return true;
 }
@@ -247,19 +316,57 @@ void* InitSteamClient(HMODULE* phMod, bool bLocal, const char* iface)
     
     // Get the Steam installation path first
     char steamPath[MAX_PATH] = {0};
-    if (SteamAPI_GetSteamInstallPath() && 
-        strcmp(SteamAPI_GetSteamInstallPath(), "UCOnline2_InvalidPath") != 0)
+    
+    UCOLOG("[UCOnline2] Attempting registry lookup for Steam path");
+    // Try direct registry lookup first (more reliable)
+    if (!GetSteamPathFromRegistry(steamPath, MAX_PATH))
     {
-        strcpy_s(steamPath, SteamAPI_GetSteamInstallPath());
-        UCOLOG("[UCOnline2] Using Steam path: %s", steamPath);
+        UCOLOG("[UCOnline2] Registry lookup failed, trying hardcoded paths");
+        // Fallback to hardcoded common paths
+        const char* commonPaths[] = {
+            "C:\\Program Files (x86)\\Steam",
+            "C:\\Program Files\\Steam",
+            "C:\\Steam"
+        };
+        
+        bool found = false;
+        for (int i = 0; i < _countof(commonPaths); i++)
+        {
+            UCOLOG("[UCOnline2] Checking path: %s", commonPaths[i]);
+            DWORD attrs = GetFileAttributesA(commonPaths[i]);
+            UCOLOG("[UCOnline2] Path check attrs: %lu, error: %lu", attrs, GetLastError());
+            if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
+            {
+                strcpy_s(steamPath, MAX_PATH, commonPaths[i]);
+                found = true;
+                UCOLOG("[UCOnline2] Found valid Steam path: %s", steamPath);
+                break;
+            }
+        }
+        
+        if (!found)
+        {
+            // Last resort: try SteamAPI_GetSteamInstallPath (may have cached value)
+            const char* cachedPath = SteamAPI_GetSteamInstallPath();
+            if (cachedPath && strcmp(cachedPath, "UCOnline2_InvalidPath") != 0)
+            {
+                strcpy_s(steamPath, MAX_PATH, cachedPath);
+                found = true;
+            }
+            else
+            {
+                UCOLOG("[UCOnline2] ERROR: Could not determine Steam installation path");
+                return nullptr;
+            }
+        }
     }
     else
     {
-        // Fallback to current directory if we can't get Steam path
-        strcpy_s(steamPath, ".");
-        UCOLOG("[UCOnline2] Steam path unavailable, using current directory");
+        UCOLOG("[UCOnline2] Registry lookup succeeded: %s", steamPath);
     }
-
+    
+    UCOLOG("[UCOnline2] Using Steam path: %s", steamPath);
+    
     const char* steamClientPath = "steamclient.dll";
 #if defined(_M_AMD64)
     steamClientPath = "steamclient64.dll";
@@ -267,47 +374,39 @@ void* InitSteamClient(HMODULE* phMod, bool bLocal, const char* iface)
     
     // Build full path to steamclient.dll
     char fullPath[MAX_PATH] = {0};
-    if (strcmp(steamPath, ".") == 0)
+    _snprintf_s(fullPath, MAX_PATH, _TRUNCATE, "%s\\%s", steamPath, steamClientPath);
+    
+    // First, check if the DLL is already loaded in this process (Steam bootstrapper handles this)
+    HMODULE hMod = GetModuleHandleA(steamClientPath);
+    if (hMod)
     {
-        strcpy_s(fullPath, steamClientPath);
+        UCOLOG("[UCOnline2] steamclient.dll already loaded in process, using existing handle");
     }
     else
     {
-        // Use _snprintf_s which is available
-        size_t len = strlen(steamPath);
-        if (len > 0 && steamPath[len-1] != '\\' && steamPath[len-1] != '/')
-        {
-            _snprintf_s(fullPath, MAX_PATH, _TRUNCATE, "%s\\%s", steamPath, steamClientPath);
-        }
-        else
-        {
-            _snprintf_s(fullPath, MAX_PATH, _TRUNCATE, "%s%s", steamPath, steamClientPath);
-        }
-    }
-    
-    UCOLOG("[UCOnline2] Loading Steam client from: %s", fullPath);
-    
-    HMODULE hMod = LoadLibraryA(fullPath);
-    if (!hMod)
-    {
-        UCOLOG("[UCOnline2] Failed to load steamclient.dll from %s (error %lu)", fullPath, GetLastError());
-        
-        // Try fallback to just the filename (let Windows search PATH)
-        UCOLOG("[UCOnline2] Trying to load steamclient.dll from system PATH");
-        hMod = LoadLibraryA(steamClientPath);
+        UCOLOG("[UCOnline2] Loading Steam client from: %s", fullPath);
+        hMod = LoadLibraryA(fullPath);
         if (!hMod)
         {
-            UCOLOG("[UCOnline2] Failed to load steamclient.dll from PATH (error %lu)", GetLastError());
-            return nullptr;
+            UCOLOG("[UCOnline2] Failed to load steamclient.dll from %s (error %lu)", fullPath, GetLastError());
+            
+            // Try fallback to just the filename (let Windows search PATH)
+            UCOLOG("[UCOnline2] Trying to load steamclient.dll from system PATH");
+            hMod = LoadLibraryA(steamClientPath);
+            if (!hMod)
+            {
+                UCOLOG("[UCOnline2] Failed to load steamclient.dll from PATH (error %lu)", GetLastError());
+                return nullptr;
+            }
+            else
+            {
+                UCOLOG("[UCOnline2] Successfully loaded steamclient.dll from PATH");
+            }
         }
         else
         {
-            UCOLOG("[UCOnline2] Successfully loaded steamclient.dll from PATH");
+            UCOLOG("[UCOnline2] Successfully loaded steamclient.dll from Steam directory");
         }
-    }
-    else
-    {
-        UCOLOG("[UCOnline2] Successfully loaded steamclient.dll from Steam directory");
     }
     
     if (phMod)
@@ -322,8 +421,24 @@ void* InitSteamClient(HMODULE* phMod, bool bLocal, const char* iface)
     
     UCOLOG("[UCOnline2] Got CreateInterface: 0x%p", pfnCreateInterface);
     
+    UCOLOG("[UCOnline2] Calling CreateInterface with interface: %s", iface);
     void* result = pfnCreateInterface(iface, nullptr);
+    if (!result)
+    {
+        // Check if Steam is actually running
+        DWORD steamPID = 0;
+        LSTATUS status = RegQueryValueExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Valve\\Steam\\ActiveProcess\\pid", 0, nullptr, (LPBYTE)&steamPID, (DWORD*)sizeof(DWORD));
+        UCOLOG("[UCOnline2] Steam PID from registry: %lu (status: %d)", steamPID, status);
+        
+        // Log the actual error from CreateInterface
+        UCOLOG("[UCOnline2] CreateInterface returned NULL for %s - Steam may not be running or interface not supported", iface);
+    }
     UCOLOG("[UCOnline2] CreateInterface returned: 0x%p for interface %s", result, iface);
+    
+    if (!result)
+    {
+        UCOLOG("[UCOnline2] CreateInterface returned NULL - interface not found or Steam not running");
+    }
     
     return result;
 }
