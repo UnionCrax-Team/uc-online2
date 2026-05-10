@@ -296,3 +296,4 @@ void UCOColor(WORD color, const char* text);
 void* InitSteamClient(HMODULE* phModule, bool bLocal, const char* iface);
 void LoadBreakpadSymbols(HMODULE hMod);
 void UpdateMinidumpSteamID(uint64 sid);
+void InstallBIsSubscribedAppHook();

@@ -218,7 +218,6 @@ S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* psz
 
 					// Hook BIsSubscribedApp to always return true
 					// Fixes games with hardcoded AppID subscription checks (e.g. Godot games)
-					extern void __cdecl InstallBIsSubscribedAppHook();
 					InstallBIsSubscribedAppHook();
 
 					return k_ESteamAPIInitResult_OK;
