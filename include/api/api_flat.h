@@ -2212,25 +2212,98 @@ S_API int32 S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileRead(intptr_t instancePt
 	// Fallback: try direct filesystem read (handles files not in Steam's VDF cloud manifest)
 	if (result <= 0 && pchFile && pchFile[0])
 	{
-		// Get current SteamID for userdata path
+		// Get current SteamID for path construction
 		uint64 steamID = 0;
 		ISteamUser* pUser = g_ClientCtx.SteamUser();
 		if (pUser)
 			steamID = pUser->GetSteamID().ConvertToUint64();
 
+		// Normalize path separators in the requested file path
+		char normalizedFile[MAX_PATH] = {0};
+		strcpy_s(normalizedFile, sizeof(normalizedFile), pchFile);
+		for (char* p = normalizedFile; *p; p++)
+			if (*p == '/') *p = '\\';
+
+		// Try multiple fallback paths
+		const int MAX_CANDIDATES = 8;
+		char candidates[MAX_CANDIDATES][MAX_PATH * 2] = {{{0}}};
+		int nCandidates = 0;
+
+		// 1. Steam userdata path
 		if (steamID != 0 && g_InstallPath[0] != '\0')
 		{
-			char localPath[MAX_PATH * 2] = {0};
-			_snprintf_s(localPath, sizeof(localPath), _TRUNCATE,
+			_snprintf_s(candidates[nCandidates++], MAX_PATH * 2, _TRUNCATE,
 				"%s\\userdata\\%llu\\%u\\remote\\%s",
-				g_InstallPath, steamID, g_ForcedAppId, pchFile);
+				g_InstallPath, steamID, g_ForcedAppId, normalizedFile);
+		}
 
-			// Normalize path separators
-			for (char* p = localPath; *p; p++)
-				if (*p == '/') *p = '\\';
+		// 2. APPDATA + SteamID folder
+		const char* appData = getenv("APPDATA");
+		if (appData && appData[0] && steamID != 0)
+		{
+			_snprintf_s(candidates[nCandidates++], MAX_PATH * 2, _TRUNCATE,
+				"%s\\SlayTheSpire2\\steam\\%llu\\%s",
+				appData, steamID, normalizedFile);
+		}
+
+		// 3. Current working directory
+		{
+			char cwd[MAX_PATH] = {0};
+			if (GetCurrentDirectoryA(MAX_PATH, cwd) && cwd[0])
+			{
+				_snprintf_s(candidates[nCandidates++], MAX_PATH * 2, _TRUNCATE,
+					"%s\\%s", cwd, normalizedFile);
+			}
+		}
+
+		// 4. Module (DLL) directory - try to find the DLL's path
+		{
+			HMODULE hMod = GetModuleHandleA("steam_api64.dll");
+			if (!hMod) hMod = GetModuleHandleA("steam_api.dll");
+			if (hMod)
+			{
+				char modPath[MAX_PATH] = {0};
+				GetModuleFileNameA(hMod, modPath, MAX_PATH);
+				char* lastSlash = strrchr(modPath, '\\');
+				if (lastSlash)
+				{
+					*lastSlash = '\0';
+					_snprintf_s(candidates[nCandidates++], MAX_PATH * 2, _TRUNCATE,
+						"%s\\%s", modPath, normalizedFile);
+				}
+			}
+		}
+
+		// 5. Game exe directory
+		{
+			char exePath[MAX_PATH] = {0};
+			GetModuleFileNameA(NULL, exePath, MAX_PATH);
+			char* lastSlash = strrchr(exePath, '\\');
+			if (lastSlash)
+			{
+				*lastSlash = '\0';
+				_snprintf_s(candidates[nCandidates++], MAX_PATH * 2, _TRUNCATE,
+					"%s\\%s", exePath, normalizedFile);
+			}
+		}
+
+		// Try each candidate path
+		for (int i = 0; i < nCandidates; i++)
+		{
+			if (candidates[i][0] == '\0') continue;
+
+			// Clean up any double backslashes
+			for (char* p = candidates[i]; *p; p++)
+				if (*p == '/' || *p == '\\')
+				{
+					char* next = p + 1;
+					while (*next == '/' || *next == '\\') next++;
+					if (next != p + 1)
+						memmove(p + 1, next, strlen(next) + 1);
+				}
 
 			FILE* f = nullptr;
-			fopen_s(&f, localPath, "rb");
+			fopen_s(&f, candidates[i], "rb");
 			if (f)
 			{
 				fseek(f, 0, SEEK_END);
