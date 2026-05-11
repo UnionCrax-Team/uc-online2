@@ -4,13 +4,6 @@ CCallbackDispatcher* GetDispatcher();
 // Forward declaration for GetSteamPathFromRegistry (defined in dllmain.cpp)
 bool GetSteamPathFromRegistry(char* outPath, size_t pathSize);
 
-// DEBUG helper
-#define DEBUG_WRITE(msg) do { \
-    FILE* _df = nullptr; \
-    fopen_s(&_df, "C:\\Users\\cools\\Desktop\\uc_online2_debug.txt", "ab"); \
-    if (_df) { fprintf(_df, msg); fclose(_df); } \
-} while(0)
-
 uint32 CountRegisteredCallbacks(int iCallbackId)
 {
 	uint32 count = 0;
@@ -29,6 +22,7 @@ uint32 CountRegisteredCallbacks(int iCallbackId)
 		}
 	}
 
+	UCOLOG("[UCOnline2] CountRegisteredCallbacks -> %d = %u\r\n", iCallbackId, count);
 	return count;
 }
 
@@ -48,182 +42,217 @@ static bool s_bAnonUser = false;
 
 S_API HSteamPipe S_CALLTYPE GetHSteamPipe()
 {
+	UCOLOG("[UCOnline2] GetHSteamPipe -> %u", g_ClientPipe);
 	return g_ClientPipe;
 }
 
 S_API HSteamUser S_CALLTYPE GetHSteamUser()
 {
+	UCOLOG("[UCOnline2] GetHSteamUser -> %u", g_ClientUser);
 	return g_ClientUser;
 }
 
 S_API HSteamPipe S_CALLTYPE SteamAPI_GetHSteamPipe()
 {
+	UCOLOG("[UCOnline2] SteamAPI_GetHSteamPipe -> %u", g_ClientPipe);
 	return g_ClientPipe;
 }
 
 S_API HSteamUser S_CALLTYPE SteamAPI_GetHSteamUser()
 {
+	UCOLOG("[UCOnline2] SteamAPI_GetHSteamUser -> %u", g_ClientUser);
 	return g_ClientUser;
 }
 
 S_API const char* S_CALLTYPE SteamAPI_GetSteamInstallPath()
 {
+    UCOLOG("[UCOnline2] SteamAPI_GetSteamInstallPath called");
+
     if (g_bHaveInstallPath)
     {
+        UCOLOG("[UCOnline2] Steam Install Path (cached) --> %s", g_InstallPath);
         return g_InstallPath;
     }
 
+    // Try to get Steam path from registry instead of complex process detection
     if (GetSteamPathFromRegistry(g_InstallPath, MAX_PATH))
     {
         g_bHaveInstallPath = true;
+        UCOLOG("[UCOnline2] Steam Install Path --> %s", g_InstallPath);
         return g_InstallPath;
     }
 
+    UCOLOG("[UCOnline2] Returning invalid path: UCOnline2_InvalidPath");
     return "UCOnline2_InvalidPath";
 }
 
 S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* pszVersions, SteamErrMsg* pOutErr)
 {
+	UCOLOG("[UCOnline2] SteamAPI_Init called with pszVersions: %s", pszVersions ? pszVersions : "null");
 	SetAppIDEnv();
 	WriteAppIDFile();
+	UCOLOG("[UCOnline2] AppID forced to %u", g_ForcedAppId);
 
 	if (g_pSteamClient)
 	{
-		DEBUG_WRITE("[DEBUG] Already initialized, returning OK\n");
+		UCOLOG("[UCOnline2] Init already called, SteamClient: 0x%p, use Shutdown first", g_pSteamClient);
 		return k_ESteamAPIInitResult_OK;
 	}
 
-	DEBUG_WRITE("[DEBUG] Calling InitSteamClient...\n");
 	g_pSteamClient = static_cast<ISteamClient*>(InitSteamClient(&g_ClientModule, s_bAnonUser, STEAMCLIENT_INTERFACE_VERSION));
+	UCOLOG("[UCOnline2] InitSteamClient returned SteamClient: 0x%p", g_pSteamClient);
+
 	if (!g_pSteamClient)
 	{
-		DEBUG_WRITE("[DEBUG] InitSteamClient FAILED\n");
+		UCOLOG("[UCOnline2] Failed to get SteamClient");
 		SteamAPI_Shutdown();
 		return k_ESteamAPIInitResult_FailedGeneric;
 	}
-	DEBUG_WRITE("[DEBUG] InitSteamClient OK\n");
 
 	SetAppIDEnv();
+	UCOLOG("[UCOnline2] SetAppIDEnv called after SteamClient acquisition");
 
 	if (!s_bAnonUser)
 	{
-		DEBUG_WRITE("[DEBUG] Creating SteamPipe...\n");
+		UCOLOG("[UCOnline2] Creating global Steam user (non-anonymous)");
 		g_ClientPipe = g_pSteamClient->CreateSteamPipe();
+		UCOLOG("[UCOnline2] CreateSteamPipe returned: %u", g_ClientPipe);
+		
 		if (g_ClientPipe == 0)
 		{
-			DEBUG_WRITE("[DEBUG] CreateSteamPipe FAILED\n");
+			UCOLOG("[UCOnline2] CreateSteamPipe failed");
 			SteamAPI_Shutdown();
 			return k_ESteamAPIInitResult_NoSteamClient;
 		}
-		DEBUG_WRITE("[DEBUG] CreateSteamPipe OK\n");
 
-		DEBUG_WRITE("[DEBUG] ConnectToGlobalUser...\n");
 		g_ClientUser = g_pSteamClient->ConnectToGlobalUser(g_ClientPipe);
+		UCOLOG("[UCOnline2] ConnectToGlobalUser returned: %u", (uint32)g_ClientUser);
 	}
 	else
 	{
-		DEBUG_WRITE("[DEBUG] CreateLocalUser...\n");
+		UCOLOG("[UCOnline2] Creating local anonymous Steam user");
 		g_ClientUser = g_pSteamClient->CreateLocalUser(&g_ClientPipe, k_EAccountTypeAnonUser);
+		UCOLOG("[UCOnline2] CreateLocalUser returned: %u", (uint32)g_ClientUser);
 	}
 
-	if (g_ClientUser == 0)
-	{
-		DEBUG_WRITE("[DEBUG] ConnectToGlobalUser/CreateLocalUser FAILED\n");
-		SteamAPI_Shutdown();
-		return k_ESteamAPIInitResult_NoSteamClient;
-	}
-	DEBUG_WRITE("[DEBUG] ConnectToGlobalUser/CreateLocalUser OK\n");
+	UCOLOG("[UCOnline2] Final ClientUser: %u", (uint32)g_ClientUser);
 
-	if (pszVersions)
+	if (g_ClientUser != 0)
 	{
-		DEBUG_WRITE("[DEBUG] Version checking enabled\n");
-		HMODULE hMod = g_ClientModule;
-		if (g_ServerModule) hMod = g_ServerModule;
-
-		g_pfnIsKnownInterface = (Fn_IsKnownInterface)GetProcAddress(hMod, "Steam_IsKnownInterface");
-		if (!g_pfnIsKnownInterface)
+		UCOLOG("[UCOnline2] Valid client user obtained, proceeding with interface initialization");
+		
+		if (pszVersions)
 		{
-			DEBUG_WRITE("[DEBUG] Steam_IsKnownInterface NOT FOUND -> VERSION MISMATCH\n");
+			UCOLOG("[UCOnline2] Version checking enabled");
+			HMODULE hMod = g_ClientModule;
+			if (g_ServerModule) hMod = g_ServerModule;
+
+			g_pfnIsKnownInterface = (Fn_IsKnownInterface)GetProcAddress(hMod, "Steam_IsKnownInterface");
+			if (!g_pfnIsKnownInterface)
+			{
+				UCOLOG("[UCOnline2] Steam_IsKnownInterface function not found");
+				SteamAPI_Shutdown();
+				return k_ESteamAPIInitResult_VersionMismatch;
+			}
+			else
+			{
+				UCOLOG("[UCOnline2] Steam_IsKnownInterface function found: 0x%p", g_pfnIsKnownInterface);
+			}
+		}
+		else
+		{
+			UCOLOG("[UCOnline2] Version checking disabled (pszVersions is null)");
+		}
+
+		ISteamUtils* pUtils = (ISteamUtils*)g_pSteamClient->GetISteamUtils(g_ClientPipe, STEAMUTILS_INTERFACE_VERSION);
+		UCOLOG("[UCOnline2] GetISteamUtils returned: 0x%p", pUtils);
+		
+		if (pUtils)
+		{
+			uint32 reportedID = pUtils->GetAppID();
+			UCOLOG("[UCOnline2] Steam Utils reported AppID: %u", reportedID);
+
+			if (reportedID == 0)
+				UCOLOG("[UCOnline2] Steam reported AppID 0, forcing to %u", g_ForcedAppId);
+
+			SetAppIDEnv();
+			UCOLOG("[UCOnline2] SetAppIDEnv called after Utils acquisition");
+			
+			SteamAPI_SetBreakpadAppID(g_ForcedAppId);
+			UCOLOG("[UCOnline2] Set Breakpad AppID to: %u", g_ForcedAppId);
+			
+			Steam_RegisterInterfaceFuncs(g_ClientModule);
+			UCOLOG("[UCOnline2] Registered interface functions with client module");
+			
+			LoadBreakpadSymbols(g_ClientModule);
+			UCOLOG("[UCOnline2] Loaded breakpad symbols");
+
+			g_pSteamClient->Set_SteamAPI_CCheckCallbackRegisteredInProcess(CountRegisteredCallbacks);
+			UCOLOG("[UCOnline2] Set callback registration function");
+
+			ISteamUser* pUser = (ISteamUser*)g_pSteamClient->GetISteamUser(g_ClientUser, g_ClientPipe, STEAMUSER_INTERFACE_VERSION);
+			UCOLOG("[UCOnline2] GetISteamUser returned: 0x%p", pUser);
+			
+			if (pUser)
+			{
+				uint64 sid = pUser->GetSteamID().ConvertToUint64();
+				bool bLogged = pUser->BLoggedOn();
+				UCOLOG("[UCOnline2] SteamUser details - SID: %llu, LoggedOn: %s", sid, bLogged ? "yes" : "no");
+				
+				UpdateMinidumpSteamID(sid);
+
+				if (pUtils)
+				{
+					g_bClientReady = g_ClientCtx.Init();
+					UCOLOG("[UCOnline2] Client context init result: %s", g_bClientReady ? "success" : "failed");
+				}
+				else
+				{
+					g_bClientReady = false;
+					UCOLOG("[UCOnline2] Client context init skipped (no Utils)");
+				}
+
+				if (g_bClientReady)
+				{
+					UCOLOG("[UCOnline2] SteamAPI_Init successful");
+
+					// Hook BIsSubscribedApp to always return true
+					// Fixes games with hardcoded AppID subscription checks (e.g. Godot games)
+					InstallBIsSubscribedAppHook();
+
+					return k_ESteamAPIInitResult_OK;
+				}
+				else
+				{
+					UCOLOG("[UCOnline2] g_ClientCtx.Init failed");
+					SteamAPI_Shutdown();
+					return k_ESteamAPIInitResult_VersionMismatch;
+				}
+			}
+			else
+			{
+				UCOLOG("[UCOnline2] Failed to get ISteamUser interface");
+				WarnMissingInterface(g_ClientPipe, STEAMUSER_INTERFACE_VERSION);
+				SteamAPI_Shutdown();
+				return k_ESteamAPIInitResult_VersionMismatch;
+			}
+		}
+		else
+		{
+			UCOLOG("[UCOnline2] Failed to get ISteamUtils interface");
+			WarnMissingInterface(g_ClientPipe, STEAMUTILS_INTERFACE_VERSION);
 			SteamAPI_Shutdown();
 			return k_ESteamAPIInitResult_VersionMismatch;
 		}
-		DEBUG_WRITE("[DEBUG] Steam_IsKnownInterface found OK\n");
 	}
 	else
 	{
-		DEBUG_WRITE("[DEBUG] Version checking disabled (pszVersions is null)\n");
-	}
-
-	DEBUG_WRITE("[DEBUG] Getting ISteamUtils...\n");
-	ISteamUtils* pUtils = (ISteamUtils*)g_pSteamClient->GetISteamUtils(g_ClientPipe, STEAMUTILS_INTERFACE_VERSION);
-	if (!pUtils)
-	{
-		DEBUG_WRITE("[DEBUG] GetISteamUtils FAILED\n");
-		WarnMissingInterface(g_ClientPipe, STEAMUTILS_INTERFACE_VERSION);
+		UCOLOG("[UCOnline2] Failed to create/connect Steam user (got 0)");
 		SteamAPI_Shutdown();
-		return k_ESteamAPIInitResult_VersionMismatch;
-	}
-	DEBUG_WRITE("[DEBUG] GetISteamUtils OK\n");
-
-	uint32 reportedID = pUtils->GetAppID();
-	DEBUG_WRITE("[DEBUG] Steam reported AppID: ");
-	// Write AppID as text
-	{
-		FILE* _df = nullptr;
-		fopen_s(&_df, "C:\\Users\\cools\\Desktop\\uc_online2_debug.txt", "ab");
-		if (_df) { fprintf(_df, "%u\n", reportedID); fclose(_df); }
+		return k_ESteamAPIInitResult_NoSteamClient;
 	}
 
-	SetAppIDEnv();
-	SteamAPI_SetBreakpadAppID(g_ForcedAppId);
-	Steam_RegisterInterfaceFuncs(g_ClientModule);
-	LoadBreakpadSymbols(g_ClientModule);
-	g_pSteamClient->Set_SteamAPI_CCheckCallbackRegisteredInProcess(CountRegisteredCallbacks);
-
-	DEBUG_WRITE("[DEBUG] Getting ISteamUser...\n");
-	ISteamUser* pUser = (ISteamUser*)g_pSteamClient->GetISteamUser(g_ClientUser, g_ClientPipe, STEAMUSER_INTERFACE_VERSION);
-	if (!pUser)
-	{
-		DEBUG_WRITE("[DEBUG] GetISteamUser FAILED\n");
-		WarnMissingInterface(g_ClientPipe, STEAMUSER_INTERFACE_VERSION);
-		SteamAPI_Shutdown();
-		return k_ESteamAPIInitResult_VersionMismatch;
-	}
-	DEBUG_WRITE("[DEBUG] GetISteamUser OK\n");
-
-	uint64 sid = pUser->GetSteamID().ConvertToUint64();
-	bool bLogged = pUser->BLoggedOn();
-	{
-		FILE* _df = nullptr;
-		fopen_s(&_df, "C:\\Users\\cools\\Desktop\\uc_online2_debug.txt", "ab");
-		if (_df) { fprintf(_df, "[DEBUG] SteamUser - SID: %llu, LoggedOn: %s\n", sid, bLogged ? "yes" : "no"); fclose(_df); }
-	}
-
-	UpdateMinidumpSteamID(sid);
-
-	DEBUG_WRITE("[DEBUG] Calling g_ClientCtx.Init()...\n");
-	g_bClientReady = g_ClientCtx.Init();
-	{
-		FILE* _df = nullptr;
-		fopen_s(&_df, "C:\\Users\\cools\\Desktop\\uc_online2_debug.txt", "ab");
-		if (_df) { fprintf(_df, "[DEBUG] g_ClientCtx.Init() = %s\n", g_bClientReady ? "success" : "failed"); fclose(_df); }
-	}
-
-	if (g_bClientReady)
-	{
-		DEBUG_WRITE("[DEBUG] SteamAPI_Init SUCCESS: installing BIsSubscribedApp hook\n");
-		InstallBIsSubscribedAppHook();
-		DEBUG_WRITE("[DEBUG] BIsSubscribedApp hook installed\n");
-		return k_ESteamAPIInitResult_OK;
-	}
-	else
-	{
-		DEBUG_WRITE("[DEBUG] g_ClientCtx.Init FAILED -> Shutdown\n");
-		SteamAPI_Shutdown();
-		return k_ESteamAPIInitResult_VersionMismatch;
-	}
-
-	DEBUG_WRITE("[DEBUG] SteamAPI_Init falling through to generic failure\n");
+	UCOLOG("[UCOnline2] SteamAPI_Init falling through to generic failure");
 	SteamAPI_Shutdown();
 	return k_ESteamAPIInitResult_FailedGeneric;
 }
@@ -250,17 +279,21 @@ S_API bool S_CALLTYPE SteamAPI_InitAnonymousUser()
 
 S_API bool S_CALLTYPE SteamAPI_InitSafe()
 {
+	UCOLOG("[UCOnline2] SteamAPI_InitSafe\r\n");
 	s_bAnonUser = false;
 
 	bool bOk = SteamAPI_Init();
 	if (bOk && g_pSteamClient)
 		return true;
 
+	UCOColor(FOREGROUND_RED | FOREGROUND_INTENSITY, "[UCOnline2] SteamAPI_InitSafe failed\r\n");
 	return false;
 }
 
 S_API bool S_CALLTYPE SteamAPI_IsSteamRunning()
 {
+	UCOLOG("[UCOnline2] SteamAPI_IsSteamRunning");
+
 	DWORD ActiveProcessPID = 0;
 	LSTATUS GetPID = GetRegistryDWORD("Software\\Valve\\Steam\\ActiveProcess", "pid", ActiveProcessPID);
 
@@ -279,7 +312,19 @@ S_API bool S_CALLTYPE SteamAPI_IsSteamRunning()
 			{
 				return true;
 			}
+			else
+			{
+				UCOColor(FOREGROUND_RED | FOREGROUND_INTENSITY, "[UCOnline2] GetExitCodeProcess Failed (SteamAPI_IsSteamRunning)!\r\n");
+			}
 		}
+		else
+		{
+			UCOColor(FOREGROUND_RED | FOREGROUND_INTENSITY, "[UCOnline2] OpenProcess Failed (SteamAPI_IsSteamRunning)!\r\n");
+		}
+	}
+	else
+	{
+		UCOColor(FOREGROUND_RED | FOREGROUND_INTENSITY, "[UCOnline2] Unable to get the PID of the Steam process (SteamAPI_IsSteamRunning)!\r\n");
 	}
 
 	return false;
@@ -287,12 +332,15 @@ S_API bool S_CALLTYPE SteamAPI_IsSteamRunning()
 
 S_API void S_CALLTYPE SteamAPI_ReleaseCurrentThreadMemory()
 {
+	UCOLOG("[UCOnline2] SteamAPI_ReleaseCurrentThreadMemory\r\n");
 	if (g_pfnReleaseThreadLocal)
 		g_pfnReleaseThreadLocal(0);
 }
 
 S_API bool S_CALLTYPE SteamAPI_RestartAppIfNecessary(uint32 appId)
 {
+	UCOLOG("[UCOnline2] SteamAPI_RestartAppIfNecessary called with appId: %u", appId);
 	SetAppIDEnv();
+	UCOLOG("[UCOnline2] SetAppIDEnv called, returning false (no restart needed)");
 	return false;
 }
