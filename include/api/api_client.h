@@ -88,6 +88,13 @@ S_API const char* S_CALLTYPE SteamAPI_GetSteamInstallPath()
 
 S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* pszVersions, SteamErrMsg* pOutErr)
 {
+    // DEBUG: Force-write to verify this function is reached
+    FILE* debugFile = nullptr;
+    fopen_s(&debugFile, "C:\\Users\\cools\\Desktop\\uc_online2_debug.txt", "ab");
+    if (debugFile) {
+        fprintf(debugFile, "[DEBUG] SteamInternal_SteamAPI_Init entered\n");
+        fclose(debugFile);
+    }
 	UCOLOG("[UCOnline2] SteamAPI_Init called with pszVersions: %s", pszVersions ? pszVersions : "null");
 	SetAppIDEnv();
 	WriteAppIDFile();
@@ -259,6 +266,14 @@ S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* psz
 
 S_API bool S_CALLTYPE SteamAPI_Init()
 {
+    // DEBUG: Force-write to a separate file to confirm this function is reached
+    OutputDebugStringA("[UCOnline2-DEBUG] SteamAPI_Init ENTERED\n");
+    FILE* debugFile = nullptr;
+    fopen_s(&debugFile, "C:\\Users\\cools\\Desktop\\uc_online2_debug.txt", "ab");
+    if (debugFile) {
+        fprintf(debugFile, "[DEBUG] SteamAPI_Init entered\n");
+        fclose(debugFile);
+    }
 	s_bAnonUser = false;
 	return SteamInternal_SteamAPI_Init(nullptr, nullptr) == k_ESteamAPIInitResult_OK;
 }
