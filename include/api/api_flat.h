@@ -2206,7 +2206,14 @@ S_API int32 S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileRead(intptr_t instancePt
 {
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamRemoteStorage()->FileRead(pchFile, pvData, cubDataToRead);
+	int32 result = g_ClientCtx.SteamRemoteStorage()->FileRead(pchFile, pvData, cubDataToRead);
+
+	// DEBUG: log file reads
+	FILE* _df = nullptr;
+	fopen_s(&_df, "C:\\Users\\cools\\Desktop\\uc_online2_save_debug.txt", "ab");
+	if (_df) { fprintf(_df, "[READ] %s -> %d bytes\n", pchFile ? pchFile : "null", result); fclose(_df); }
+
+	return result;
 }
 S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileWriteAsync(intptr_t instancePtr, const char * pchFile, const void * pvData, uint32 cubData)
 {
@@ -2236,7 +2243,12 @@ S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileDelete(intptr_t instanceP
 {
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamRemoteStorage()->FileDelete(pchFile);
+	bool result = g_ClientCtx.SteamRemoteStorage()->FileDelete(pchFile);
+	// DEBUG
+	FILE* _df = nullptr;
+	fopen_s(&_df, "C:\\Users\\cools\\Desktop\\uc_online2_save_debug.txt", "ab");
+	if (_df) { fprintf(_df, "[DELETE] %s -> %s\n", pchFile ? pchFile : "null", result ? "OK" : "FAIL"); fclose(_df); }
+	return result;
 }
 S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileShare(intptr_t instancePtr, const char * pchFile)
 {
@@ -2278,7 +2290,12 @@ S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileExists(intptr_t instanceP
 {
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamRemoteStorage()->FileExists(pchFile);
+	bool result = g_ClientCtx.SteamRemoteStorage()->FileExists(pchFile);
+	// DEBUG
+	FILE* _df = nullptr;
+	fopen_s(&_df, "C:\\Users\\cools\\Desktop\\uc_online2_save_debug.txt", "ab");
+	if (_df) { fprintf(_df, "[EXISTS] %s -> %s\n", pchFile ? pchFile : "null", result ? "TRUE" : "FALSE"); fclose(_df); }
+	return result;
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FilePersisted(intptr_t instancePtr, const char * pchFile)
 {
