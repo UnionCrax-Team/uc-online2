@@ -2206,7 +2206,46 @@ S_API int32 S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileRead(intptr_t instancePt
 {
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamRemoteStorage()->FileRead(pchFile, pvData, cubDataToRead);
+
+	int32 result = g_ClientCtx.SteamRemoteStorage()->FileRead(pchFile, pvData, cubDataToRead);
+
+	// Fallback: try direct filesystem read (handles files not in Steam's VDF cloud manifest)
+	if (result <= 0 && pchFile && pchFile[0])
+	{
+		// Get current SteamID for userdata path
+		uint64 steamID = 0;
+		ISteamUser* pUser = g_ClientCtx.SteamUser();
+		if (pUser)
+			steamID = pUser->GetSteamID().ConvertToUint64();
+
+		if (steamID != 0 && g_InstallPath[0] != '\0')
+		{
+			char localPath[MAX_PATH * 2] = {0};
+			_snprintf_s(localPath, sizeof(localPath), _TRUNCATE,
+				"%s\\userdata\\%llu\\%u\\remote\\%s",
+				g_InstallPath, steamID, g_ForcedAppId, pchFile);
+
+			// Normalize path separators
+			for (char* p = localPath; *p; p++)
+				if (*p == '/') *p = '\\';
+
+			FILE* f = nullptr;
+			fopen_s(&f, localPath, "rb");
+			if (f)
+			{
+				fseek(f, 0, SEEK_END);
+				int32 fileSize = (int32)ftell(f);
+				fseek(f, 0, SEEK_SET);
+				int32 readSize = (cubDataToRead < fileSize) ? cubDataToRead : fileSize;
+				size_t bytesRead = fread(pvData, 1, readSize, f);
+				fclose(f);
+				if (bytesRead > 0)
+					return (int32)bytesRead;
+			}
+		}
+	}
+
+	return result;
 }
 S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileWriteAsync(intptr_t instancePtr, const char * pchFile, const void * pvData, uint32 cubData)
 {
