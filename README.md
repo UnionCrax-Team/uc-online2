@@ -1,10 +1,18 @@
-# uc-online2
+# uc-online2 — xinerqu 分支
+
+> **⚠️ 此仓库是 [UnionCrax-Team/uc-online2](https://github.com/UnionCrax-Team/uc-online2) 的个人维护分支 (fork)。**
+>
+> 原作者 [veeanti](https://vee-anti.xyz) 的工作是上游的基础。本分支在原 v1.5.0 基础上修复了关键 bug 并补全了功能，如果上游未合并 PR，两条线将各自独立发展。
+>
+> 英文说明见原文下方，本段为中文摘要。详细变更见 [Changelog](#changelog)。
+
+# uc-online2 (Original README below)
 
 Custom modified Steam API .dll for Steam games to spoof your game as Spacewar (or any other game). Drop-in replacement for `steam_api.dll` / `steam_api64.dll`. Now has its own "client"! (AKA Core)
 
 ## Usage
 
-__**If using downloaded .dlls from [Releases](https://github.com/unioncrax-team/uc-online2/releases):**__
+__**If using downloaded .dlls from [Releases](https://github.com/xinerqu/uc-online2/releases) (xinerqu fork, v1.5.1):**__
 - 1. Extract the archive downloaded from __**LATEST**__ release (which is now v1.5.0).
 - 2. Copy the corresponding .dll to replace your original .dll.
    - 2a. Rename the original .dll before copying it to something else if you feel you must back it up, something like ``steam_api_o.dll`` as Goldberg Emu suggests or ``steam_api64.dll.old``. (It doesn't matter as long as it is just changed.)
@@ -89,3 +97,76 @@ Okay, so this part I did not cover as of publishing the source files, this will 
 - If you're trying this with a game that has the AppId hard coded in (like with Godot games) then you'll need to modify the game to set the AppId to what you need it to be. Though, you won't even need this at all if you do that lol. 
 - You cannot join VAC protected servers or servers hosted using the real AppId in Garry's Mod or other Source games or any other games that have similar protections. (GoldSrc games seemingly do not apply, as CS1.6 let me join any servers.) Please do not message me asking why you can't join any servers in Garry's Mod. Instead, ask me how you can play with your friends if they have legitimate copies. :)
 - For any other unexpected or unaccounted for issues, please contact me. I have yet to test this with every game so I will rely on the community to do so. 
+
+## Changelog (xinerqu fork vs upstream v1.5.0)
+
+### v1.5.1 — Bug fixes & missing API exports
+
+**Bug 1：`InitSteamClient()` 加载路径缺陷**
+- 原代码使用 `LoadLibraryA(fullPath)` 加载 `steamclient64.dll`
+- Windows 解析 DLL 依赖（tier0_s64.dll, vstdlib_s64.dll）时会在游戏 exe 目录查找，而非 Steam 目录
+- **修复**：改用 `LoadLibraryExA` + `LOAD_WITH_ALTERED_SEARCH_PATH`，并在 `uc_loader.h` 中统一修复 core DLL 加载路径
+
+**Bug 2：`LoadGameOverlay()` 硬编码路径**
+- `GetModuleHandle` 使用硬编码 `C:\Program Files (x86)\Steam\GameOverlayRenderer64.dll`
+- Steam 安装在非默认路径时误判 overlay 已加载
+- **修复**：改用 `GetModuleHandleA(模块名)`，三级 Steam 路径回退（注册表 → 硬编码 → API 缓存），PATH 搜索回退
+
+**缺失 flat API 导出补全**
+- 34 个 `ISteamMusicRemote` flat API 导出
+- 11 个旧版 `ISteamGameSearch` flat API 存根
+- `ISteamFriends_SetPersonaName` + `ISteamFriends_GetUserRestrictions`
+- 旧版本号接口别名（v001 GameSearch/MusicRemote/Timeline、v017 Friends、v012 UserStats、v020 UGC 等）
+- `g_pSteamClientGameServer` 导出（修复 `S_API` 声明位置）
+
+**其他修复**
+- Release 模式日志：移除 `#ifdef _DEBUG` 守卫，UCOLOG 现在在所有构建模式下工作
+- 更健壮的 DLL 路径解析：`PathFindFileNameA` 确保文件名提取正确
+
+---
+
+## 与上游同步策略 (Syncing with upstream)
+
+如果上游（UnionCrax-Team/uc-online2）后续发布了新版本，而你希望在不丢失本 fork 修改的前提下合并上游的新功能：
+
+### 方法一：git merge（推荐，较简单）
+
+```bash
+# 添加上游为 remote（仅需一次）
+git remote add upstream https://github.com/UnionCrax-Team/uc-online2.git
+
+# 拉取上游最新代码
+git fetch upstream
+
+# 合并到你的 main 分支
+git merge upstream/main
+```
+
+然后手动解决冲突（本 fork 修改了 DLL 加载路径等核心函数，冲突可能性较高）。
+
+### 方法二：git rebase（历史更干净）
+
+```bash
+git fetch upstream
+git rebase upstream/main
+```
+
+Rebase 会将你的 7 个提交"移植"到上游最新版本之上，历史更线性。但如果冲突多，每个提交都需要解决一次冲突。
+
+### 冲突解决指南
+
+最容易冲突的区域：
+- `dllmain.cpp`：InitSteamClient()、LoadGameOverlay() 函数
+- `uc_online2_core.cpp`：配置读取、接口定义
+- `include/` 下的头文件
+
+**建议**：冲突时查看上游改了什么，把有用的新功能 cherry-pick 过来，不需要盲目全盘合并。关键原则是：**你改动的核心加载逻辑要保持不变，上游的功能改进要选择性采纳。**
+
+### 另一种思路：分别维护
+
+如果上游改动很大、冲突太多，也可以：
+1. 关注上游的 Release 页面，看他的更新日志
+2. 只把感兴趣的新功能（比如 DLC 支持、新游戏兼容）手动移植到你的代码中
+3. 不需要 git 层面的合并，直接复制相关代码段
+
+这样可以完全掌控哪些改动进入你的分支，避免被动引入 bug。
