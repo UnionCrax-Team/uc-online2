@@ -2208,11 +2208,63 @@ S_API int32 S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileRead(intptr_t instancePt
 		__debugbreak();
 	int32 result = g_ClientCtx.SteamRemoteStorage()->FileRead(pchFile, pvData, cubDataToRead);
 
-	// DEBUG: log file reads
-	FILE* _df = nullptr;
-	fopen_s(&_df, "C:\\Users\\cools\\Desktop\\uc_online2_save_debug.txt", "ab");
-	if (_df) { fprintf(_df, "[READ] %s -> %d bytes\n", pchFile ? pchFile : "null", result); fclose(_df); }
-
+	// Fallback: if Steam returns nothing, try local file in %APPDATA%/<game>/steam/<SteamID>/
+	if (result <= 0 && pchFile && pchFile[0])
+	{
+		static char s_localBase[MAX_PATH] = {0};
+		if (s_localBase[0] == '\0')
+		{
+			uint64 steamID = 0;
+			ISteamUser* pUser = g_ClientCtx.SteamUser();
+			if (pUser) steamID = pUser->GetSteamID().ConvertToUint64();
+			if (steamID != 0)
+			{
+				char sid[32] = {0};
+				_snprintf_s(sid, sizeof(sid), _TRUNCATE, "%llu", steamID);
+				const char* appData = getenv("APPDATA");
+				if (appData && appData[0])
+				{
+					WIN32_FIND_DATAA ffd = {0};
+					char sp[MAX_PATH] = {0};
+					_snprintf_s(sp, sizeof(sp), _TRUNCATE, "%s\\*", appData);
+					HANDLE hFind = FindFirstFileA(sp, &ffd);
+					if (hFind != INVALID_HANDLE_VALUE)
+					{
+						do {
+							if (!(ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+							if (strcmp(ffd.cFileName, ".") == 0 || strcmp(ffd.cFileName, "..") == 0) continue;
+							char cp[MAX_PATH] = {0};
+							_snprintf_s(cp, sizeof(cp), _TRUNCATE, "%s\\%s\\steam\\%s", appData, ffd.cFileName, sid);
+							if (GetFileAttributesA(cp) != INVALID_FILE_ATTRIBUTES)
+							{ strcpy_s(s_localBase, sizeof(s_localBase), cp); break; }
+						} while (FindNextFileA(hFind, &ffd));
+						FindClose(hFind);
+					}
+				}
+			}
+		}
+		if (s_localBase[0] != '\0')
+		{
+			char norm[MAX_PATH] = {0};
+			strcpy_s(norm, sizeof(norm), pchFile);
+			for (char* p = norm; *p; p++) if (*p == '/') *p = '\\';
+			if (norm[0] == '\\') memmove(norm, norm + 1, strlen(norm));
+			char fp[MAX_PATH * 2] = {0};
+			_snprintf_s(fp, sizeof(fp), _TRUNCATE, "%s\\%s", s_localBase, norm);
+			FILE* f = nullptr;
+			fopen_s(&f, fp, "rb");
+			if (f)
+			{
+				fseek(f, 0, SEEK_END);
+				int32 fs = (int32)ftell(f);
+				fseek(f, 0, SEEK_SET);
+				int32 rs = (cubDataToRead < fs) ? cubDataToRead : fs;
+				size_t br = fread(pvData, 1, rs, f);
+				fclose(f);
+				if (br > 0) return (int32)br;
+			}
+		}
+	}
 	return result;
 }
 S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileWriteAsync(intptr_t instancePtr, const char * pchFile, const void * pvData, uint32 cubData)
@@ -2243,12 +2295,7 @@ S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileDelete(intptr_t instanceP
 {
 	if (g_bClientReady == false)
 		__debugbreak();
-	bool result = g_ClientCtx.SteamRemoteStorage()->FileDelete(pchFile);
-	// DEBUG
-	FILE* _df = nullptr;
-	fopen_s(&_df, "C:\\Users\\cools\\Desktop\\uc_online2_save_debug.txt", "ab");
-	if (_df) { fprintf(_df, "[DELETE] %s -> %s\n", pchFile ? pchFile : "null", result ? "OK" : "FAIL"); fclose(_df); }
-	return result;
+	return g_ClientCtx.SteamRemoteStorage()->FileDelete(pchFile);
 }
 S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileShare(intptr_t instancePtr, const char * pchFile)
 {
@@ -2291,10 +2338,54 @@ S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileExists(intptr_t instanceP
 	if (g_bClientReady == false)
 		__debugbreak();
 	bool result = g_ClientCtx.SteamRemoteStorage()->FileExists(pchFile);
-	// DEBUG
-	FILE* _df = nullptr;
-	fopen_s(&_df, "C:\\Users\\cools\\Desktop\\uc_online2_save_debug.txt", "ab");
-	if (_df) { fprintf(_df, "[EXISTS] %s -> %s\n", pchFile ? pchFile : "null", result ? "TRUE" : "FALSE"); fclose(_df); }
+
+	// Fallback: if Steam says no, check local file in %APPDATA%/<game>/steam/<SteamID>/
+	if (!result && pchFile && pchFile[0])
+	{
+		static char s_localBase[MAX_PATH] = {0};
+		if (s_localBase[0] == '\0')
+		{
+			uint64 steamID = 0;
+			ISteamUser* pUser = g_ClientCtx.SteamUser();
+			if (pUser) steamID = pUser->GetSteamID().ConvertToUint64();
+			if (steamID != 0)
+			{
+				char sid[32] = {0};
+				_snprintf_s(sid, sizeof(sid), _TRUNCATE, "%llu", steamID);
+				const char* appData = getenv("APPDATA");
+				if (appData && appData[0])
+				{
+					WIN32_FIND_DATAA ffd = {0};
+					char sp[MAX_PATH] = {0};
+					_snprintf_s(sp, sizeof(sp), _TRUNCATE, "%s\\*", appData);
+					HANDLE hFind = FindFirstFileA(sp, &ffd);
+					if (hFind != INVALID_HANDLE_VALUE)
+					{
+						do {
+							if (!(ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+							if (strcmp(ffd.cFileName, ".") == 0 || strcmp(ffd.cFileName, "..") == 0) continue;
+							char cp[MAX_PATH] = {0};
+							_snprintf_s(cp, sizeof(cp), _TRUNCATE, "%s\\%s\\steam\\%s", appData, ffd.cFileName, sid);
+							if (GetFileAttributesA(cp) != INVALID_FILE_ATTRIBUTES)
+							{ strcpy_s(s_localBase, sizeof(s_localBase), cp); break; }
+						} while (FindNextFileA(hFind, &ffd));
+						FindClose(hFind);
+					}
+				}
+			}
+		}
+		if (s_localBase[0] != '\0')
+		{
+			char norm[MAX_PATH] = {0};
+			strcpy_s(norm, sizeof(norm), pchFile);
+			for (char* p = norm; *p; p++) if (*p == '/') *p = '\\';
+			if (norm[0] == '\\') memmove(norm, norm + 1, strlen(norm));
+			char fp[MAX_PATH * 2] = {0};
+			_snprintf_s(fp, sizeof(fp), _TRUNCATE, "%s\\%s", s_localBase, norm);
+			if (GetFileAttributesA(fp) != INVALID_FILE_ATTRIBUTES)
+				result = true;
+		}
+	}
 	return result;
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FilePersisted(intptr_t instancePtr, const char * pchFile)
