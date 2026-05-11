@@ -2218,69 +2218,32 @@ S_API int32 S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileRead(intptr_t instancePt
 		if (pUser)
 			steamID = pUser->GetSteamID().ConvertToUint64();
 
-		// Normalize path separators
+		// Normalize path separators in the requested file path
 		char normalizedFile[MAX_PATH] = {0};
 		strcpy_s(normalizedFile, sizeof(normalizedFile), pchFile);
 		for (char* p = normalizedFile; *p; p++)
 			if (*p == '/') *p = '\\';
-		// Remove leading backslash if any
-		if (normalizedFile[0] == '\\')
-			memmove(normalizedFile, normalizedFile + 1, strlen(normalizedFile));
 
-		// Build candidate paths
-		const int MAX_CANDIDATES = 16;
+		// Try multiple fallback paths
+		const int MAX_CANDIDATES = 8;
 		char candidates[MAX_CANDIDATES][MAX_PATH * 2] = {{{0}}};
 		int nCandidates = 0;
 
 		// 1. Steam userdata path
 		if (steamID != 0 && g_InstallPath[0] != '\0')
 		{
-			// 32-bit SteamID for userdata folder
-			uint32 accountID = (uint32)(steamID & 0xFFFFFFFF);
 			_snprintf_s(candidates[nCandidates++], MAX_PATH * 2, _TRUNCATE,
-				"%s\\userdata\\%u\\%u\\remote\\%s",
-				g_InstallPath, accountID, g_ForcedAppId, normalizedFile);
+				"%s\\userdata\\%llu\\%u\\remote\\%s",
+				g_InstallPath, steamID, g_ForcedAppId, normalizedFile);
 		}
 
-		// 2. APPDATA: search for game folders containing the SteamID subfolder
+		// 2. APPDATA + SteamID folder
 		const char* appData = getenv("APPDATA");
 		if (appData && appData[0] && steamID != 0)
 		{
-			char steamIDstr[32] = {0};
-			_snprintf_s(steamIDstr, sizeof(steamIDstr), _TRUNCATE, "%llu", steamID);
-
-			// Search all subdirs of APPDATA for "{anything}\steam\{SteamID}\{file}"
-			WIN32_FIND_DATAA ffd = {0};
-			char searchPath[MAX_PATH] = {0};
-			_snprintf_s(searchPath, sizeof(searchPath), _TRUNCATE, "%s\\*", appData);
-			HANDLE hFind = FindFirstFileA(searchPath, &ffd);
-			if (hFind != INVALID_HANDLE_VALUE)
-			{
-				do {
-					if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY &&
-						strcmp(ffd.cFileName, ".") != 0 &&
-						strcmp(ffd.cFileName, "..") != 0)
-					{
-						// Try: {APPDATA}\{GameFolder}\steam\{SteamID}\{file}
-						_snprintf_s(candidates[nCandidates], MAX_PATH * 2, _TRUNCATE,
-							"%s\\%s\\steam\\%s\\%s",
-							appData, ffd.cFileName, steamIDstr, normalizedFile);
-
-						// Check if this path exists before adding to candidates
-						DWORD attrs = GetFileAttributesA(candidates[nCandidates]);
-						if (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY))
-						{
-							nCandidates++;
-							if (nCandidates >= MAX_CANDIDATES) break;
-						}
-						else
-						{
-							candidates[nCandidates][0] = '\0';
-						}
-					}
-				} while (FindNextFileA(hFind, &ffd) != 0 && nCandidates < MAX_CANDIDATES);
-				FindClose(hFind);
-			}
+			_snprintf_s(candidates[nCandidates++], MAX_PATH * 2, _TRUNCATE,
+				"%s\\SlayTheSpire2\\steam\\%llu\\%s",
+				appData, steamID, normalizedFile);
 		}
 
 		// 3. Current working directory
@@ -2293,7 +2256,7 @@ S_API int32 S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileRead(intptr_t instancePt
 			}
 		}
 
-		// 4. DLL directory
+		// 4. Module (DLL) directory - try to find the DLL's path
 		{
 			HMODULE hMod = GetModuleHandleA("steam_api64.dll");
 			if (!hMod) hMod = GetModuleHandleA("steam_api.dll");
@@ -2311,7 +2274,7 @@ S_API int32 S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileRead(intptr_t instancePt
 			}
 		}
 
-		// 5. Exe directory
+		// 5. Game exe directory
 		{
 			char exePath[MAX_PATH] = {0};
 			GetModuleFileNameA(NULL, exePath, MAX_PATH);
@@ -2324,10 +2287,21 @@ S_API int32 S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileRead(intptr_t instancePt
 			}
 		}
 
-		// Try each candidate
+		// Try each candidate path
 		for (int i = 0; i < nCandidates; i++)
 		{
 			if (candidates[i][0] == '\0') continue;
+
+			// Clean up any double backslashes
+			for (char* p = candidates[i]; *p; p++)
+				if (*p == '/' || *p == '\\')
+				{
+					char* next = p + 1;
+					while (*next == '/' || *next == '\\') next++;
+					if (next != p + 1)
+						memmove(p + 1, next, strlen(next) + 1);
+				}
+
 			FILE* f = nullptr;
 			fopen_s(&f, candidates[i], "rb");
 			if (f)
@@ -2416,61 +2390,7 @@ S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileExists(intptr_t instanceP
 {
 	if (g_bClientReady == false)
 		__debugbreak();
-	
-	bool result = g_ClientCtx.SteamRemoteStorage()->FileExists(pchFile);
-
-	// Fallback: check local filesystem
-	if (!result && pchFile && pchFile[0])
-	{
-		// Try the same candidate paths as FileRead fallback
-		char normalizedFile[MAX_PATH] = {0};
-		strcpy_s(normalizedFile, sizeof(normalizedFile), pchFile);
-		for (char* p = normalizedFile; *p; p++)
-			if (*p == '/') *p = '\\';
-		if (normalizedFile[0] == '\\')
-			memmove(normalizedFile, normalizedFile + 1, strlen(normalizedFile));
-
-		const int MAX_CHECKS = 8;
-		char checkPaths[MAX_CHECKS][MAX_PATH * 2] = {{{0}}};
-		int nChecks = 0;
-
-		// Steam userdata path
-		if (g_InstallPath[0] != '\0')
-		{
-			_snprintf_s(checkPaths[nChecks++], MAX_PATH * 2, _TRUNCATE,
-				"%s\\userdata\\%u\\%u\\remote\\%s",
-				g_InstallPath, (uint32)(SteamAPI_GetHSteamUser() & 0xFFFFFFFF),
-				g_ForcedAppId, normalizedFile);
-		}
-
-		// Current directory
-		{
-			char cwd[MAX_PATH] = {0};
-			if (GetCurrentDirectoryA(MAX_PATH, cwd) && cwd[0])
-				_snprintf_s(checkPaths[nChecks++], MAX_PATH * 2, _TRUNCATE, "%s\\%s", cwd, normalizedFile);
-		}
-
-		// Exe directory
-		{
-			char exePath[MAX_PATH] = {0};
-			GetModuleFileNameA(NULL, exePath, MAX_PATH);
-			char* lastSlash = strrchr(exePath, '\\');
-			if (lastSlash) {
-				*lastSlash = '\0';
-				_snprintf_s(checkPaths[nChecks++], MAX_PATH * 2, _TRUNCATE, "%s\\%s", exePath, normalizedFile);
-			}
-		}
-
-		for (int i = 0; i < nChecks; i++)
-		{
-			if (checkPaths[i][0] == '\0') continue;
-			DWORD attrs = GetFileAttributesA(checkPaths[i]);
-			if (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY))
-				return true;
-		}
-	}
-
-	return result;
+	return g_ClientCtx.SteamRemoteStorage()->FileExists(pchFile);
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FilePersisted(intptr_t instancePtr, const char * pchFile)
 {
