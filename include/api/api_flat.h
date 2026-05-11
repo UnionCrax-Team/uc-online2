@@ -2552,9 +2552,9 @@ S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_EndFileWriteBatch(intptr_t in
 }
 S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamUserStats_RequestCurrentStats(intptr_t instancePtr)
 {
-	if (g_bClientReady == false)
-		__debugbreak();
-	return g_ClientCtx.SteamUserStats()->RequestCurrentStats();
+	// RequestCurrentStats was removed from SDK (managed by Steam client)
+	// Return invalid to let the caller handle gracefully
+	return k_uAPICallInvalid;
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamUserStats_GetStatInt32(intptr_t instancePtr, const char * pchName, int32 * pData)
 {
