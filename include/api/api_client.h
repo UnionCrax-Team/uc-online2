@@ -1,6 +1,8 @@
 static bool s_bDispatcherInited = false;
 CCallbackDispatcher* GetDispatcher();
 
+bool GetSteamPathFromRegistry(char* outPath, size_t pathSize);
+
 uint32 CountRegisteredCallbacks(int iCallbackId)
 {
 	uint32 count = 0;
@@ -272,6 +274,10 @@ S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* psz
 
 			if (g_bClientReady)
 			{
+				// try and make sure this works, thank you xinerqu
+				InstallBIsSubscribedAppHook();
+
+				return k_ESteamAPIInitResult_OK;
 			}
 
 			if (!g_bClientReady)

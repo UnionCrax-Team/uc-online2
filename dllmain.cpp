@@ -1,5 +1,6 @@
 #include <Windows.h>
 #include <Shlwapi.h>
+#include <DbgHelp.h>
 #include <new.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -11,11 +12,14 @@
 #include "include/sdk/steamclientpublic.h"
 #include "include/sdk/steam_gameserver.h"
 
+S_API ISteamClient* g_pSteamClientGameServer = nullptr;
+
 #include "include/registfuncs.h"
 #include "include/callback_dispatcher.h"
 #include "include/globals.h"
-#include "include/dll_loader.h"
+#include "include/uc_loader.h"
 #include "include/dump_handler.h"
+#include "include/MinHook.h"
 
 #include "include/api/api_callbacks.h"
 #include "include/api/api_client.h"
@@ -48,7 +52,6 @@ HSteamPipe g_ServerPipe = 0;
 HSteamUser g_ServerUser = 0;
 ISteamClient* g_ServerClient = nullptr;
 ISteamClient* g_pServerClient = nullptr;
-ISteamClient* g_pSteamClientGameServer = nullptr;
 ISteamClient* g_pSteamClientGameServer_Latest = nullptr;
 ISteamGameServer* g_pGameServer = nullptr;
 ISteamUtils* g_pServerUtils = nullptr;
@@ -151,26 +154,23 @@ static void UCOLogImpl(const char* fmt, va_list args)
 
 void UCOLOG(const char* fmt, ...)
 {
-#ifdef _DEBUG
 	if (!fmt) return;
 	va_list args;
 	va_start(args, fmt);
 	UCOLogImpl(fmt, args);
 	va_end(args);
-#endif
 }
 
 void UCOColor(WORD color, const char* text)
 {
 	(void)color;
-#ifdef _DEBUG
 	if (text && text[0])
 		UCOLOG("%s", text);
-#endif
 }
 
 // ============================================================
-// InitSteamClient
+// InitSteamClient // I seriously broke this later on in the
+//				   // releases, I am SO SORRY ya'll!!
 // ============================================================
 
 void* InitSteamClient(HMODULE* phMod, bool bLocal, const char* iface)
@@ -250,6 +250,55 @@ void* InitSteamClient(HMODULE* phMod, bool bLocal, const char* iface)
 
 	return nullptr;
 }
+
+// ============================================================
+// BIsSubscribedApp Hook - always return true
+// Fixes games with hardcoded AppID subscription checks
+// ~ credits to xinerqu ~
+// ============================================================
+
+typedef bool (S_CALLTYPE *Fn_BIsSubscribedApp)(void*, AppId_t);
+static Fn_BIsSubscribedApp g_pfnOriginalBIsSubscribedApp = nullptr;
+
+static bool S_CALLTYPE Hooked_BIsSubscribedApp(void* pSteamApps, AppId_t appId)
+{
+    UCOLOG("[UCOnline2] BIsSubscribedApp(%u) -> hooked, returning true", appId);
+    return true;
+}
+
+void InstallBIsSubscribedAppHook()
+{
+    if (!g_bClientReady || !g_ClientCtx.SteamApps())
+    {
+        UCOLOG("[UCOnline2] Cannot install BIsSubscribedApp hook: client not ready or SteamApps is null");
+        return;
+    }
+
+    void** vtable = *reinterpret_cast<void***>(g_ClientCtx.SteamApps());
+
+    // ISteamApps vtable layout (from isteamapps.h):
+    // 0: BIsSubscribed, 1: BIsLowViolence, 2: BIsCybercafe, 3: BIsVACBanned,
+    // 4: GetCurrentGameLanguage, 5: GetAvailableGameLanguages, 6: BIsSubscribedApp
+    void* pOriginalFunc = vtable[6];
+
+    MH_STATUS mhStatus = MH_Initialize();
+    UCOLOG("[UCOnline2] MH_Initialize status: %d", mhStatus);
+
+    mhStatus = MH_CreateHook(pOriginalFunc, &Hooked_BIsSubscribedApp, reinterpret_cast<void**>(&g_pfnOriginalBIsSubscribedApp));
+    if (mhStatus == MH_OK)
+    {
+        mhStatus = MH_EnableHook(pOriginalFunc);
+        if (mhStatus == MH_OK)
+            UCOLOG("[UCOnline2] BIsSubscribedApp hook installed successfully");
+        else
+            UCOLOG("[UCOnline2] MH_EnableHook failed for BIsSubscribedApp: %d", mhStatus);
+    }
+    else
+    {
+        UCOLOG("[UCOnline2] MH_CreateHook failed for BIsSubscribedApp: %d", mhStatus);
+    }
+}
+
 
 // ============================================================
 // LoadGameOverlay

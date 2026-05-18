@@ -540,6 +540,10 @@ S_API ISteamMusic* S_CALLTYPE SteamAPI_ISteamClient_GetISteamMusic(intptr_t inst
 		__debugbreak();
 	return g_ClientCtx.SteamClient()->GetISteamMusic(hSteamuser, hSteamPipe, pchVersion);
 }
+S_API ISteamMusicRemote* S_CALLTYPE SteamAPI_ISteamClient_GetISteamMusicRemote(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char *pchVersion)
+{
+	return (ISteamMusicRemote*)SteamMusicRemote();
+}
 S_API ISteamHTMLSurface* S_CALLTYPE SteamAPI_ISteamClient_GetISteamHTMLSurface(intptr_t instancePtr, HSteamUser hSteamuser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
 	if (g_bServerReady == true)
@@ -594,6 +598,10 @@ S_API ISteamInput* S_CALLTYPE SteamAPI_ISteamClient_GetISteamInput(intptr_t inst
 	if (g_bClientReady == false)
 		__debugbreak();
 	return g_ClientCtx.SteamClient()->GetISteamInput(hSteamUser, hSteamPipe, pchVersion);
+}
+S_API ISteamAppList* S_CALLTYPE SteamAPI_ISteamClient_GetISteamAppList(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char * pchVersion)
+{
+	return (ISteamAppList*)SteamInternal_FindOrCreateUserInterface(hSteamUser, pchVersion);
 }
 S_API ISteamParties* S_CALLTYPE SteamAPI_ISteamClient_GetISteamParties(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -2274,7 +2282,56 @@ S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileExists(intptr_t instanceP
 {
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamRemoteStorage()->FileExists(pchFile);
+	bool result = g_ClientCtx.SteamRemoteStorage()->FileExists(pchFile);
+
+	// Fallback: if Steam says no, check local file in %APPDATA%/<game>/steam/<SteamID>/
+	if (!result && pchFile && pchFile[0])
+	{
+		static char s_localBase[MAX_PATH] = {0};
+		if (s_localBase[0] == '\0')
+		{
+			uint64 steamID = 0;
+			ISteamUser* pUser = g_ClientCtx.SteamUser();
+			if (pUser) steamID = pUser->GetSteamID().ConvertToUint64();
+			if (steamID != 0)
+			{
+				char sid[32] = {0};
+				_snprintf_s(sid, sizeof(sid), _TRUNCATE, "%llu", steamID);
+				const char* appData = getenv("APPDATA");
+				if (appData && appData[0])
+				{
+					WIN32_FIND_DATAA ffd = {0};
+					char sp[MAX_PATH] = {0};
+					_snprintf_s(sp, sizeof(sp), _TRUNCATE, "%s\\*", appData);
+					HANDLE hFind = FindFirstFileA(sp, &ffd);
+					if (hFind != INVALID_HANDLE_VALUE)
+					{
+						do {
+							if (!(ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+							if (strcmp(ffd.cFileName, ".") == 0 || strcmp(ffd.cFileName, "..") == 0) continue;
+							char cp[MAX_PATH] = {0};
+							_snprintf_s(cp, sizeof(cp), _TRUNCATE, "%s\\%s\\steam\\%s", appData, ffd.cFileName, sid);
+							if (GetFileAttributesA(cp) != INVALID_FILE_ATTRIBUTES)
+							{ strcpy_s(s_localBase, sizeof(s_localBase), cp); break; }
+						} while (FindNextFileA(hFind, &ffd));
+						FindClose(hFind);
+					}
+				}
+			}
+		}
+		if (s_localBase[0] != '\0')
+		{
+			char norm[MAX_PATH] = {0};
+			strcpy_s(norm, sizeof(norm), pchFile);
+			for (char* p = norm; *p; p++) if (*p == '/') *p = '\\';
+			if (norm[0] == '\\') memmove(norm, norm + 1, strlen(norm));
+			char fp[MAX_PATH * 2] = {0};
+			_snprintf_s(fp, sizeof(fp), _TRUNCATE, "%s\\%s", s_localBase, norm);
+			if (GetFileAttributesA(fp) != INVALID_FILE_ATTRIBUTES)
+				result = true;
+		}
+	}
+	return result;
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FilePersisted(intptr_t instancePtr, const char * pchFile)
 {
@@ -2545,6 +2602,12 @@ S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_EndFileWriteBatch(intptr_t in
 	if (g_bClientReady == false)
 		__debugbreak();
 	return g_ClientCtx.SteamRemoteStorage()->EndFileWriteBatch();
+}
+S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamUserStats_RequestCurrentStats(intptr_t instancePtr)
+{
+	// RequestCurrentStats was removed from SDK (managed by Steam client)
+	// Return invalid to let the caller handle gracefully
+	return k_uAPICallInvalid;
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamUserStats_GetStatInt32(intptr_t instancePtr, const char * pchName, int32 * pData)
 {
@@ -8231,3 +8294,438 @@ S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamGameServerStats_StoreUserStats(in
 		__debugbreak();
 	return g_ServerCtx.SteamGameServerStats()->StoreUserStats(steamIDUser);
 }
+
+// ============================================================
+// ISteamGameSearch - flat C API exports
+// ============================================================
+
+S_API intptr_t S_CALLTYPE SteamAPI_ISteamClient_GetISteamGameSearch(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char *pchVersion)
+{
+	return (intptr_t)g_ClientCtx.SteamGameSearch();
+}
+
+S_API void S_CALLTYPE SteamAPI_ISteamGameSearch_AddGameSearchParams(intptr_t instancePtr, const char *pchKeyToFind, const char *pchValueToFind)
+{
+	if (g_bClientReady)
+		g_ClientCtx.SteamGameSearch()->AddGameSearchParams(pchKeyToFind, pchValueToFind);
+}
+
+S_API void S_CALLTYPE SteamAPI_ISteamGameSearch_SearchForLobbyWithGameFilters(intptr_t instancePtr, class CSteamID steamIDLobby, int nPlayerMin, int nPlayerMax, int nSearchSlots, int nPreferredSlots)
+{
+	if (g_bClientReady)
+		g_ClientCtx.SteamGameSearch()->SearchForLobbyWithGameFilters(steamIDLobby, nPlayerMin, nPlayerMax, nSearchSlots, nPreferredSlots);
+}
+
+S_API uint32 S_CALLTYPE SteamAPI_ISteamGameSearch_GetTotalPlayersInLobby(intptr_t instancePtr, class CSteamID steamIDLobby)
+{
+	if (g_bClientReady)
+		return g_ClientCtx.SteamGameSearch()->GetTotalPlayersInLobby(steamIDLobby);
+	return 0;
+}
+
+S_API uint32 S_CALLTYPE SteamAPI_ISteamGameSearch_GetNumAvailableSlotsInLobby(intptr_t instancePtr, class CSteamID steamIDLobby)
+{
+	if (g_bClientReady)
+		return g_ClientCtx.SteamGameSearch()->GetNumAvailableSlotsInLobby(steamIDLobby);
+	return 0;
+}
+
+S_API void S_CALLTYPE SteamAPI_ISteamGameSearch_SubmitPlayerResult(intptr_t instancePtr, uint64 ulSearchID, class CSteamID steamIDPlayer, int nScore, int nResult)
+{
+	if (g_bClientReady)
+		g_ClientCtx.SteamGameSearch()->SubmitPlayerResult(ulSearchID, steamIDPlayer, nScore, nResult);
+}
+
+S_API void S_CALLTYPE SteamAPI_ISteamGameSearch_EndGameSearch(intptr_t instancePtr, uint64 ulSearchID)
+{
+	if (g_bClientReady)
+		g_ClientCtx.SteamGameSearch()->EndGameSearch(ulSearchID);
+}
+
+S_API void S_CALLTYPE SteamAPI_ISteamGameSearch_SetGameTags(intptr_t instancePtr, const char **pchGameTags, uint32 nGameTags)
+{
+	if (g_bClientReady)
+		g_ClientCtx.SteamGameSearch()->SetGameTags(pchGameTags, nGameTags);
+}
+
+S_API uint32 S_CALLTYPE SteamAPI_ISteamGameSearch_GetGameTags(intptr_t instancePtr, char *pchGameTags, uint32 cchGameTags)
+{
+	if (g_bClientReady)
+		return g_ClientCtx.SteamGameSearch()->GetGameTags(pchGameTags, cchGameTags);
+	return 0;
+}
+
+S_API uint32 S_CALLTYPE SteamAPI_ISteamGameSearch_GetNumPlayersSearching(intptr_t instancePtr)
+{
+	if (g_bClientReady)
+		return g_ClientCtx.SteamGameSearch()->GetNumPlayersSearching();
+	return 0;
+}
+
+S_API uint64 S_CALLTYPE SteamAPI_ISteamGameSearch_RequestPlayersForLobby(intptr_t instancePtr, uint64 ulSearchID)
+{
+	if (g_bClientReady)
+		return g_ClientCtx.SteamGameSearch()->RequestPlayersForLobby(ulSearchID);
+	return 0;
+}
+
+S_API bool S_CALLTYPE SteamAPI_ISteamGameSearch_IsGameSearchInProgress(intptr_t instancePtr)
+{
+	if (g_bClientReady)
+		return g_ClientCtx.SteamGameSearch()->IsGameSearchInProgress();
+	return false;
+}
+
+S_API uint32 S_CALLTYPE SteamAPI_ISteamGameSearch_GetPlayersInGameSearchResult(intptr_t instancePtr, uint32 unSearchResultIndex)
+{
+	if (g_bClientReady)
+		return g_ClientCtx.SteamGameSearch()->GetPlayersInGameSearchResult(unSearchResultIndex);
+	return 0;
+}
+
+S_API void S_CALLTYPE SteamAPI_ISteamGameSearch_GetPlayerInGameSearchResult(intptr_t instancePtr, uint32 unSearchResultIndex, uint32 unPlayerIndex, uint64* pOutSteamID)
+{
+	if (g_bClientReady && pOutSteamID)
+		*pOutSteamID = g_ClientCtx.SteamGameSearch()->GetPlayerInGameSearchResult(unSearchResultIndex, unPlayerIndex).ConvertToUint64();
+}
+
+S_API bool S_CALLTYPE SteamAPI_ISteamGameSearch_GetPlayerGameSearchResultData(intptr_t instancePtr, uint32 unSearchResultIndex, uint32 unPlayerIndex, const char *pchKeyToFind, char *pchValueFound, uint32 cchValueFound)
+{
+	if (g_bClientReady)
+		return g_ClientCtx.SteamGameSearch()->GetPlayerGameSearchResultData(unSearchResultIndex, unPlayerIndex, pchKeyToFind, pchValueFound, cchValueFound);
+	return false;
+}
+
+S_API uint32 S_CALLTYPE SteamAPI_ISteamGameSearch_GetPlayerGameSearchResultCount(intptr_t instancePtr, uint32 unSearchResultIndex, uint32 unPlayerIndex)
+{
+	if (g_bClientReady)
+		return g_ClientCtx.SteamGameSearch()->GetPlayerGameSearchResultCount(unSearchResultIndex, unPlayerIndex);
+	return 0;
+}
+
+// ============================================================
+// ISteamMusicRemote flat API exports (stub - all return false/0)
+// ============================================================
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_RegisterSteamMusicRemote(intptr_t instancePtr, const char* pchName)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->RegisterSteamMusicRemote(pchName);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_DeregisterSteamMusicRemote(intptr_t instancePtr)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->DeregisterSteamMusicRemote();
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_BIsCurrentMusicRemote(intptr_t instancePtr)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->BIsCurrentMusicRemote();
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_BActivationSuccess(intptr_t instancePtr, bool bValue)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->BActivationSuccess(bValue);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_SetDisplayName(intptr_t instancePtr, const char* pchDisplayName)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->SetDisplayName(pchDisplayName);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_SetPNGIcon_64x64(intptr_t instancePtr, void* pvBuffer, uint32 cbBuffer)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->SetPNGIcon_64x64(pvBuffer, cbBuffer);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_EnablePlayPrevious(intptr_t instancePtr, bool bValue)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->EnablePlayPrevious(bValue);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_EnablePlayNext(intptr_t instancePtr, bool bValue)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->EnablePlayNext(bValue);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_EnableShuffled(intptr_t instancePtr, bool bValue)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->EnableShuffled(bValue);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_EnableLooped(intptr_t instancePtr, bool bValue)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->EnableLooped(bValue);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_EnableQueue(intptr_t instancePtr, bool bValue)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->EnableQueue(bValue);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_EnablePlaylists(intptr_t instancePtr, bool bValue)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->EnablePlaylists(bValue);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_UpdatePlaybackStatus(intptr_t instancePtr, int nStatus)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->UpdatePlaybackStatus(nStatus);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_UpdateShuffled(intptr_t instancePtr, bool bValue)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->UpdateShuffled(bValue);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_UpdateLooped(intptr_t instancePtr, bool bValue)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->UpdateLooped(bValue);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_UpdateVolume(intptr_t instancePtr, float flVolume)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->UpdateVolume(flVolume);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_CurrentEntryWillChange(intptr_t instancePtr)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->CurrentEntryWillChange();
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_CurrentEntryIsAvailable(intptr_t instancePtr, bool bAvailable)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->CurrentEntryIsAvailable(bAvailable);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_UpdateCurrentEntryText(intptr_t instancePtr, const char* pchText)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->UpdateCurrentEntryText(pchText);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_UpdateCurrentEntryElapsedSeconds(intptr_t instancePtr, int nValue)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->UpdateCurrentEntryElapsedSeconds(nValue);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_UpdateCurrentEntryCoverArt(intptr_t instancePtr, void* pvBuffer, uint32 cbBuffer)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->UpdateCurrentEntryCoverArt(pvBuffer, cbBuffer);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_CurrentEntryDidChange(intptr_t instancePtr)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->CurrentEntryDidChange();
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_QueueWillChange(intptr_t instancePtr)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->QueueWillChange();
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_ResetQueueEntries(intptr_t instancePtr)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->ResetQueueEntries();
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_SetQueueEntry(intptr_t instancePtr, int nID, int nPosition, const char* pchEntryText)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->SetQueueEntry(nID, nPosition, pchEntryText);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_SetCurrentQueueEntry(intptr_t instancePtr, int nID)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->SetCurrentQueueEntry(nID);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_QueueDidChange(intptr_t instancePtr)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->QueueDidChange();
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_PlaylistWillChange(intptr_t instancePtr)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->PlaylistWillChange();
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_ResetPlaylistEntries(intptr_t instancePtr)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->ResetPlaylistEntries();
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_SetPlaylistEntry(intptr_t instancePtr, int nID, int nPosition, const char* pchEntryText)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->SetPlaylistEntry(nID, nPosition, pchEntryText);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_SetCurrentPlaylistEntry(intptr_t instancePtr, int nID)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->SetCurrentPlaylistEntry(nID);
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamMusicRemote_PlaylistDidChange(intptr_t instancePtr)
+{
+	if (g_bClientReady)
+		return SteamMusicRemote()->PlaylistDidChange();
+	return false;
+}
+
+// ============================================================
+// ISteamGameSearch old-version flat API exports (stub)
+// These existed in older Steam SDK but were removed/replaced.
+// ============================================================
+S_API bool S_CALLTYPE SteamAPI_ISteamGameSearch_SearchForGameSolo(intptr_t instancePtr, class CSteamID, int, int, int, int)
+{
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamGameSearch_SearchForGameWithLobby(intptr_t instancePtr, class CSteamID, int, int, int, int)
+{
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamGameSearch_AcceptGame(intptr_t instancePtr)
+{
+	return false;
+}
+S_API void S_CALLTYPE SteamAPI_ISteamGameSearch_DeclineGame(intptr_t instancePtr)
+{
+}
+S_API void S_CALLTYPE SteamAPI_ISteamGameSearch_HostConfirmGameStart(intptr_t instancePtr, uint64)
+{
+}
+S_API void S_CALLTYPE SteamAPI_ISteamGameSearch_CancelRequestPlayersForGame(intptr_t instancePtr)
+{
+}
+S_API void S_CALLTYPE SteamAPI_ISteamGameSearch_SetGameHostParams(intptr_t instancePtr, const char*, const char*)
+{
+}
+S_API void S_CALLTYPE SteamAPI_ISteamGameSearch_SetConnectionDetails(intptr_t instancePtr, const char*, const char*)
+{
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamGameSearch_RequestPlayersForGame(intptr_t instancePtr, uint64)
+{
+	return false;
+}
+S_API bool S_CALLTYPE SteamAPI_ISteamGameSearch_RetrieveConnectionDetails(intptr_t instancePtr, uint64, char*, uint32)
+{
+	return false;
+}
+S_API void S_CALLTYPE SteamAPI_ISteamGameSearch_EndGame(intptr_t instancePtr, uint64, uint64)
+{
+}
+
+// ============================================================
+// Missing ISteamFriends exports (old SDK methods, use stubs)
+// ============================================================
+S_API void S_CALLTYPE SteamAPI_ISteamFriends_SetPersonaName(intptr_t instancePtr, const char* pchPersonaName)
+{
+	// SetPersonaName removed in newer SDK, no-op stub
+}
+S_API uint32 S_CALLTYPE SteamAPI_ISteamFriends_GetUserRestrictions(intptr_t instancePtr)
+{
+	// GetUserRestrictions removed in newer SDK, return no restrictions
+	return 0;
+}
+
+// ============================================================
+// Missing exports from original Steam SDK
+// ============================================================
+S_API ISteamClient* S_CALLTYPE SteamAPI_SteamClient_v019()
+{
+	UCOLOG("[UCOnline2] SteamAPI_SteamClient_v019\r\n");
+	return g_bClientReady ? g_ClientCtx.SteamClient() : nullptr;
+}
+
+// ============================================================
+// ISteamAppList flat API exports
+// ============================================================
+S_API uint32 S_CALLTYPE SteamAPI_ISteamAppList_GetNumInstalledApps(intptr_t instancePtr)
+{
+	if (g_bClientReady == false) return 0;
+	ISteamAppList* p = g_ClientCtx.SteamAppList();
+	return p ? p->GetNumInstalledApps() : 0;
+}
+S_API uint32 S_CALLTYPE SteamAPI_ISteamAppList_GetInstalledApps(intptr_t instancePtr, AppId_t *pvecAppID, uint32 unMaxAppIDs)
+{
+	if (g_bClientReady == false) return 0;
+	ISteamAppList* p = g_ClientCtx.SteamAppList();
+	return p ? p->GetInstalledApps(pvecAppID, unMaxAppIDs) : 0;
+}
+S_API int S_CALLTYPE SteamAPI_ISteamAppList_GetAppName(intptr_t instancePtr, AppId_t nAppID, char *pchName, int cchNameMax)
+{
+	if (g_bClientReady == false) return -1;
+	ISteamAppList* p = g_ClientCtx.SteamAppList();
+	return p ? p->GetAppName(nAppID, pchName, cchNameMax) : -1;
+}
+S_API int S_CALLTYPE SteamAPI_ISteamAppList_GetAppInstallDir(intptr_t instancePtr, AppId_t nAppID, char *pchDirectory, int cchNameMax)
+{
+	if (g_bClientReady == false) return -1;
+	ISteamAppList* p = g_ClientCtx.SteamAppList();
+	return p ? p->GetAppInstallDir(nAppID, pchDirectory, cchNameMax) : -1;
+}
+S_API int S_CALLTYPE SteamAPI_ISteamAppList_GetAppBuildId(intptr_t instancePtr, AppId_t nAppID)
+{
+	if (g_bClientReady == false) return -1;
+	ISteamAppList* p = g_ClientCtx.SteamAppList();
+	return p ? p->GetAppBuildId(nAppID) : -1;
+}
+
+// ============================================================
+// Missing interface version string exports
+// ============================================================
+S_API const char* S_CALLTYPE SteamAPI_SteamAppList_v001() { return STEAMAPPLIST_INTERFACE_VERSION; }
+S_API const char* S_CALLTYPE SteamAPI_SteamUser_v021() { return STEAMUSER_INTERFACE_VERSION; }
+S_API const char* S_CALLTYPE SteamAPI_SteamRemotePlay_v001() { return STEAMREMOTEPLAY_INTERFACE_VERSION; }
+S_API const char* S_CALLTYPE SteamAPI_SteamUGC_v016() { return STEAMUGC_INTERFACE_VERSION; }
+S_API const char* S_CALLTYPE SteamAPI_SteamVideo_v002() { return STEAMVIDEO_INTERFACE_VERSION; }
+S_API const char* S_CALLTYPE SteamAPI_SteamGameServer_v014() { return "SteamGameServer014"; }
+S_API const char* S_CALLTYPE SteamAPI_SteamGameServerUGC_v016() { return "SteamUGC016"; }
+
+// ============================================================
+// SteamDatagramHostedAddress stub exports
+// ============================================================
+S_API void S_CALLTYPE SteamAPI_SteamDatagramHostedAddress_Clear(intptr_t self) {}
+S_API uint16 S_CALLTYPE SteamAPI_SteamDatagramHostedAddress_GetPopID(intptr_t self) { return 0; }
+S_API void S_CALLTYPE SteamAPI_SteamDatagramHostedAddress_SetDevAddress(intptr_t self, uint32, uint32, uint32) {}
+
+// ============================================================
+// Stadia identity stub exports (deprecated platform)
+// ============================================================
+S_API bool S_CALLTYPE SteamAPI_SteamNetworkingIdentity_GetStadiaID(intptr_t self) { return false; }
+S_API void S_CALLTYPE SteamAPI_SteamNetworkingIdentity_SetStadiaID(intptr_t self, uint64) {}
+
+// ============================================================
+// ISteamNetworkingFakeUDPPort stub exports
+// ============================================================
+S_API void S_CALLTYPE SteamAPI_ISteamNetworkingFakeUDPPort_DestroyFakeUDPPort(intptr_t instancePtr) {}
+S_API int S_CALLTYPE SteamAPI_ISteamNetworkingFakeUDPPort_ReceiveMessages(intptr_t instancePtr, void**, int) { return 0; }
+S_API void S_CALLTYPE SteamAPI_ISteamNetworkingFakeUDPPort_ScheduleCleanup(intptr_t instancePtr) {}
+S_API void S_CALLTYPE SteamAPI_ISteamNetworkingFakeUDPPort_SendMessageToFakeIP(intptr_t instancePtr, void*, uint32, uint16) {}

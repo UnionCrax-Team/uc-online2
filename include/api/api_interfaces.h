@@ -124,6 +124,12 @@ S_API ISteamMusic* S_CALLTYPE SteamMusic()
 	return g_bClientReady ? g_ClientCtx.SteamMusic() : nullptr;
 }
 
+S_API ISteamMusicRemote* S_CALLTYPE SteamMusicRemote()
+{
+	UCOLOG("[UCOnline2] SteamMusicRemote\r\n");
+	return &s_MusicRemoteStub;
+}
+
 S_API ISteamNetworking* S_CALLTYPE SteamNetworking()
 {
 	UCOLOG("[UCOnline2] SteamNetworking\r\n");
