@@ -254,6 +254,7 @@ enum { k_iSteamBillingCallbacks = 400 };
 enum { k_iSteamMatchmakingCallbacks = 500 };
 enum { k_iSteamContentServerCallbacks = 600 };
 enum { k_iSteamUtilsCallbacks = 700 };
+enum { k_iSteamAppListCallbacks = 900 }
 enum { k_iSteamAppsCallbacks = 1000 };
 enum { k_iSteamUserStatsCallbacks = 1100 };
 enum { k_iSteamNetworkingCallbacks = 1200 };

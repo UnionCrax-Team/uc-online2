@@ -122,7 +122,6 @@ S_API void* S_CALLTYPE SteamInternal_ContextInit(void* pData)
 // Logging
 // ============================================================
 
-#ifdef _DEBUG
 
 static void UCOLogImpl(const char* fmt, va_list args)
 {
@@ -150,7 +149,6 @@ static void UCOLogImpl(const char* fmt, va_list args)
 
 	fclose(f);
 }
-#endif
 
 void UCOLOG(const char* fmt, ...)
 {
