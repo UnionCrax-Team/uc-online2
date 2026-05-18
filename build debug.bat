@@ -25,36 +25,36 @@ echo Found MSBuild: %MSBUILD%
 echo.
 
 echo ========================================
-echo  Building x86 (steam_api.dll)
+echo  Building x86 (debug) (steam_api.dll)
 echo ========================================
-"%MSBUILD%" "%PROJECT%" -p:Configuration=Release -p:Platform=Win32 -m
+"%MSBUILD%" "%PROJECT%" -p:Configuration=Debug -p:Platform=Win32 -m
 if %errorlevel% neq 0 (
     echo.
     echo [ERROR] x86 build failed.
     pause
     exit /b 1
 )
-echo x86 build succeeded: relbuild\x86\steam_api.dll
+echo x86 debug build succeeded: debbuild\x86\steam_api.dll
 echo.
 
 echo ========================================
-echo  Building x64 (steam_api64.dll)
+echo  Building x64 (debug) (steam_api64.dll)
 echo ========================================
-"%MSBUILD%" "%PROJECT%" -p:Configuration=Release -p:Platform=x64 -m
+"%MSBUILD%" "%PROJECT%" -p:Configuration=Debug -p:Platform=x64 -m
 if %errorlevel% neq 0 (
     echo.
     echo [ERROR] x64 build failed.
     pause
     exit /b 1
 )
-echo x64 build succeeded: relbuild\x64\steam_api64.dll
+echo x64 debug build succeeded: debbuild\x64\steam_api64.dll
 echo.
 
 echo ========================================
-echo  Both builds completed successfully
+echo  Both debug builds completed successfully
 echo ========================================
-echo  x86: relbuild\x86\steam_api.dll
-echo  x64: relbuild\x64\steam_api64.dll
+echo  x86: debbuild\x86\steam_api.dll
+echo  x64: debbuild\x64\steam_api64.dll
 echo ========================================
 
 pause

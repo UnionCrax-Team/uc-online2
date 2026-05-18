@@ -214,3 +214,55 @@ S_API ISteamVideo* S_CALLTYPE SteamAPI_SteamVideo_v007()
 	UCOLOG("[UCOnline2] SteamAPI_SteamVideo_v007\r\n");
 	return g_bClientReady ? g_ClientCtx.SteamVideo() : nullptr;
 }
+// ============================================================
+// Old-version aliases for compatibility with older Steamworks.NET
+// ============================================================
+
+S_API ISteamGameSearch* S_CALLTYPE SteamAPI_SteamGameSearch_v001()
+{
+	UCOLOG("[UCOnline2] SteamAPI_SteamGameSearch_v001\r\n");
+	return g_bClientReady ? g_ClientCtx.SteamGameSearch() : nullptr;
+}
+
+S_API ISteamMusicRemote* S_CALLTYPE SteamAPI_SteamMusicRemote_v001()
+{
+	UCOLOG("[UCOnline2] SteamAPI_SteamMusicRemote_v001\r\n");
+	return &s_MusicRemoteStub;
+}
+
+S_API void* S_CALLTYPE SteamAPI_SteamTimeline_v001()
+{
+	UCOLOG("[UCOnline2] SteamAPI_SteamTimeline_v001\r\n");
+	if (!g_bClientReady) return nullptr;
+	return SteamInternal_FindOrCreateUserInterface(g_ClientUser, STEAMTIMELINE_INTERFACE_VERSION);
+}
+
+S_API ISteamFriends* S_CALLTYPE SteamAPI_SteamFriends_v017()
+{
+	UCOLOG("[UCOnline2] SteamAPI_SteamFriends_v017\r\n");
+	return g_bClientReady ? g_ClientCtx.SteamFriends() : nullptr;
+}
+
+S_API ISteamUserStats* S_CALLTYPE SteamAPI_SteamUserStats_v012()
+{
+	UCOLOG("[UCOnline2] SteamAPI_SteamUserStats_v012\r\n");
+	return g_bClientReady ? g_ClientCtx.SteamUserStats() : nullptr;
+}
+
+S_API ISteamUGC* S_CALLTYPE SteamAPI_SteamUGC_v020()
+{
+	UCOLOG("[UCOnline2] SteamAPI_SteamUGC_v020\r\n");
+	return g_bClientReady ? g_ClientCtx.SteamUGC() : nullptr;
+}
+
+S_API ISteamUGC* S_CALLTYPE SteamAPI_SteamGameServerUGC_v020()
+{
+	UCOLOG("[UCOnline2] SteamAPI_SteamGameServerUGC_v020\r\n");
+	return g_bServerReady ? g_ServerCtx.SteamUGC() : nullptr;
+}
+
+S_API ISteamRemotePlay* S_CALLTYPE SteamAPI_SteamRemotePlay_v002()
+{
+	UCOLOG("[UCOnline2] SteamAPI_SteamRemotePlay_v002\r\n");
+	return g_bClientReady ? g_ClientCtx.SteamRemotePlay() : nullptr;
+}

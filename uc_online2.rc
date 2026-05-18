@@ -4,8 +4,8 @@
 IDI_ICON1 ICON "icon.ico"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,1,0,0
- PRODUCTVERSION 1,1,0,0
+ FILEVERSION 1,7,0,0
+ PRODUCTVERSION 1,7,0,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -21,17 +21,17 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "veeanti | union-crax.xyz"
-            VALUE "FileDescription", "uc-online2, custom Steam API modified for UC"
-            VALUE "FileVersion", "1.1.0.0"
+            VALUE "FileDescription", "uc-online2, custom Steam Client API for UnionCrax"
+            VALUE "FileVersion", "1.7.0.0"
             VALUE "InternalName", "uc-online2"
-            VALUE "LegalCopyright", "union-crax.xyz | veeanti 2026"
+            VALUE "LegalCopyright", "union-crax.xyz | veeanti | xinerqu 2026"
             #ifdef IS_64BIT
             VALUE "OriginalFilename", "steam_api64.dll"
             #else
             VALUE "OriginalFilename", "steam_api.dll"
             #endif
             VALUE "ProductName", "uc-online2"
-            VALUE "ProductVersion", "1.1.0.0"
+            VALUE "ProductVersion", "1.7.0.0"
             VALUE "Comments", "https://union-crax.xyz | https://vee-anti.xyz"
         END
     END

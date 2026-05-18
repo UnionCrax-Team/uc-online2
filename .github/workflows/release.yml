@@ -25,14 +25,22 @@ jobs:
         run: msbuild uc_online2.vcxproj -p:Configuration=Release -p:Platform=Win32 -m
 
       - name: Build x64 version (steam_api64.dll)
-        run: msbuild uc_online2.vcxproj -p:Configuration=Release -p:Platform=x64 -m
+        run: msbuild uc_online2.vcxproj -p:Configuration=Release -p:Platform=x64 -m      
+        
+      - name: Build x86 version debug (steam_api.dll)
+        run: msbuild uc_online2.vcxproj -p:Configuration=Debug -p:Platform=Win32 -m
+
+      - name: Build x64 version debug (steam_api64.dll)
+        run: msbuild uc_online2.vcxproj -p:Configuration=Debug -p:Platform=x64 -m
 
       - name: Verify build outputs
         shell: pwsh
         run: |
           $files = @(
-            "build/x86/steam_api.dll",
-            "build/x64/steam_api64.dll"
+            "relbuild/x86/steam_api.dll",
+            "relbuild/x64/steam_api64.dll"
+            "debbuild/x86/steam_api.dll"
+            "debbuild/x64/steam_api64.dll"
           )
 
           foreach ($file in $files) {
@@ -44,14 +52,14 @@ jobs:
       - name: Package release zip
         shell: pwsh
         run: |
-          $packageRoot = "dist/uc-online2-${{ github.ref_name }}"
+          $packageRoot = "dist/uc-online2-${{ github.ref_name }}.release"
           $archivePath = "$packageRoot.zip"
 
           New-Item -ItemType Directory -Path "$packageRoot/x86" -Force | Out-Null
           New-Item -ItemType Directory -Path "$packageRoot/x64" -Force | Out-Null
 
-          Copy-Item "build/x86/steam_api.dll" "$packageRoot/x86/steam_api.dll"
-          Copy-Item "build/x64/steam_api64.dll" "$packageRoot/x64/steam_api64.dll"
+          Copy-Item "relbuild/x86/steam_api.dll" "$packageRoot/x86/steam_api.dll"
+          Copy-Item "relbuild/x64/steam_api64.dll" "$packageRoot/x64/steam_api64.dll"
 
           if (Test-Path $archivePath) {
             Remove-Item $archivePath -Force
@@ -59,11 +67,33 @@ jobs:
 
           Compress-Archive -Path $packageRoot -DestinationPath $archivePath
 
+      - name: Package debug zip
+        shell: pwsh
+        run: |
+          $packageRootdeb = "dist/uc-online2-${{ github.ref_name }}.debug"
+          $archivePathdeb = "$packageRoot.zip"
+
+          New-Item -ItemType Directory -Path "$packageRootdeb/x86" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$packageRootdeb/x64" -Force | Out-Null
+
+          Copy-Item "debbuild/x86/steam_api.dll" "$packageRootdeb/x86/steam_api.dll"
+          Copy-Item "debbuild/x64/steam_api64.dll" "$packageRootdeb/x64/steam_api64.dll"
+
+          if (Test-Path $archivePathdeb) {
+            Remove-Item $archivePathdeb -Force
+          }
+
+          Compress-Archive -Path $packageRootdeb -DestinationPath $archivePathdeb
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: uc-online2-${{ github.ref_name }}
-          path: dist/uc-online2-${{ github.ref_name }}.zip
+          name: |
+            uc-online2-${{ github.ref_name }}.release
+            uc-online2-${{ github.ref_name }}.debug
+          path: |
+            dist/uc-online2-${{ github.ref_name }}.release.zip
+            dist/uc-online2-${{ github.ref_name }}.debug.zip
           if-no-files-found: error
 
       - name: Publish release assets
@@ -72,6 +102,8 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          files: dist/uc-online2-${{ github.ref_name }}.zip
+          files: |
+            dist/uc-online2-${{ github.ref_name }}.release.zip
+            dist/uc-online2-${{ github.ref_name }}.debug.zip
           generate_release_notes: true
           fail_on_unmatched_files: true

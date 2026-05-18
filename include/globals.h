@@ -15,12 +15,132 @@
 #include "include/sdk/steam_api.h"
 #include "include/sdk/steamclientpublic.h"
 #include "include/sdk/steam_gameserver.h"
+#include "include/sdk/isteamapplist.h"
 
 const uint32 k_unServerFlagNone    = 0x00;
 const uint32 k_unServerFlagSecure  = 0x01;
 const uint32 k_unServerFlagPrivate = 0x02;
 
-class ISteamGameSearch { public: virtual ~ISteamGameSearch() {} };
+class ISteamGameSearch 
+{ 
+public: 
+	virtual ~ISteamGameSearch() {} 
+	virtual void AddGameSearchParams(const char*, const char*) = 0;
+	virtual void SearchForLobbyWithGameFilters(class CSteamID, int, int, int, int) = 0;
+	virtual uint32 GetTotalPlayersInLobby(class CSteamID) = 0;
+	virtual uint32 GetNumAvailableSlotsInLobby(class CSteamID) = 0;
+	virtual void SubmitPlayerResult(uint64, class CSteamID, int, int) = 0;
+	virtual void EndGameSearch(uint64) = 0;
+	virtual void SetGameTags(const char**, uint32) = 0;
+	virtual uint32 GetGameTags(char*, uint32) = 0;
+	virtual uint32 GetNumPlayersSearching() = 0;
+	virtual uint64 RequestPlayersForLobby(uint64) = 0;
+	virtual bool IsGameSearchInProgress() = 0;
+	virtual uint32 GetPlayersInGameSearchResult(uint32) = 0;
+	virtual class CSteamID GetPlayerInGameSearchResult(uint32, uint32) = 0;
+	virtual bool GetPlayerGameSearchResultData(uint32, uint32, const char*, char*, uint32) = 0;
+	virtual uint32 GetPlayerGameSearchResultCount(uint32, uint32) = 0;
+};
+
+class CSteamGameSearchStub : public ISteamGameSearch
+{
+public:
+	virtual void AddGameSearchParams( const char *, const char * ) override {}
+	virtual void SearchForLobbyWithGameFilters( CSteamID, int, int, int, int ) override {}
+	virtual uint32 GetTotalPlayersInLobby( CSteamID ) override { return 0; }
+	virtual uint32 GetNumAvailableSlotsInLobby( CSteamID ) override { return 0; }
+	virtual void SubmitPlayerResult( uint64, CSteamID, int, int ) override {}
+	virtual void EndGameSearch( uint64 ) override {}
+	virtual void SetGameTags( const char **, uint32 ) override {}
+	virtual uint32 GetGameTags( char *, uint32 ) override { return 0; }
+	virtual uint32 GetNumPlayersSearching() override { return 0; }
+	virtual SteamAPICall_t RequestPlayersForLobby( uint64 ) override { return k_uAPICallInvalid; }
+	virtual bool IsGameSearchInProgress() override { return false; }
+	virtual uint32 GetPlayersInGameSearchResult( uint32 ) override { return 0; }
+	virtual  CSteamID GetPlayerInGameSearchResult( uint32, uint32 ) override { return k_steamIDNil; }
+	virtual bool GetPlayerGameSearchResultData( uint32, uint32, const char *, char *, uint32 ) override { return false; }
+	virtual uint32 GetPlayerGameSearchResultCount( uint32, uint32 ) override { return 0; }
+};
+
+static CSteamGameSearchStub s_GameSearchStub;
+
+// music
+class ISteamMusicRemote
+{
+public:
+	virtual ~ISteamMusicRemote() {}
+	virtual bool RegisterSteamMusicRemote(const char*) = 0;
+	virtual bool DeregisterSteamMusicRemote() = 0;
+	virtual bool BIsCurrentMusicRemote() = 0;
+	virtual bool BActivationSuccess(bool) = 0;
+	virtual bool SetDisplayName(const char*) = 0;
+	virtual bool SetPNGIcon_64x64(void*, uint32) = 0;
+	virtual bool EnablePlayPrevious(bool) = 0;
+	virtual bool EnablePlayNext(bool) = 0;
+	virtual bool EnableShuffled(bool) = 0;
+	virtual bool EnableLooped(bool) = 0;
+	virtual bool EnableQueue(bool) = 0;
+	virtual bool EnablePlaylists(bool) = 0;
+	virtual bool UpdatePlaybackStatus(int) = 0;
+	virtual bool UpdateShuffled(bool) = 0;
+	virtual bool UpdateLooped(bool) = 0;
+	virtual bool UpdateVolume(float) = 0;
+	virtual bool CurrentEntryWillChange() = 0;
+	virtual bool CurrentEntryIsAvailable(bool) = 0;
+	virtual bool UpdateCurrentEntryText(const char*) = 0;
+	virtual bool UpdateCurrentEntryElapsedSeconds(int) = 0;
+	virtual bool UpdateCurrentEntryCoverArt(void*, uint32) = 0;
+	virtual bool CurrentEntryDidChange() = 0;
+	virtual bool QueueWillChange() = 0;
+	virtual bool ResetQueueEntries() = 0;
+	virtual bool SetQueueEntry(int, int, const char*) = 0;
+	virtual bool SetCurrentQueueEntry(int) = 0;
+	virtual bool QueueDidChange() = 0;
+	virtual bool PlaylistWillChange() = 0;
+	virtual bool ResetPlaylistEntries() = 0;
+	virtual bool SetPlaylistEntry(int, int, const char*) = 0;
+	virtual bool SetCurrentPlaylistEntry(int) = 0;
+	virtual bool PlaylistDidChange() = 0;
+};
+
+class CSteamMusicRemoteStub : public ISteamMusicRemote
+{
+public:
+	virtual bool RegisterSteamMusicRemote(const char*) override { return false; }
+	virtual bool DeregisterSteamMusicRemote() override { return false; }
+	virtual bool BIsCurrentMusicRemote() override { return false; }
+	virtual bool BActivationSuccess(bool) override { return false; }
+	virtual bool SetDisplayName(const char*) override { return false; }
+	virtual bool SetPNGIcon_64x64(void*, uint32) override { return false; }
+	virtual bool EnablePlayPrevious(bool) override { return false; }
+	virtual bool EnablePlayNext(bool) override { return false; }
+	virtual bool EnableShuffled(bool) override { return false; }
+	virtual bool EnableLooped(bool) override { return false; }
+	virtual bool EnableQueue(bool) override { return false; }
+	virtual bool EnablePlaylists(bool) override { return false; }
+	virtual bool UpdatePlaybackStatus(int) override { return false; }
+	virtual bool UpdateShuffled(bool) override { return false; }
+	virtual bool UpdateLooped(bool) override { return false; }
+	virtual bool UpdateVolume(float) override { return false; }
+	virtual bool CurrentEntryWillChange() override { return false; }
+	virtual bool CurrentEntryIsAvailable(bool) override { return false; }
+	virtual bool UpdateCurrentEntryText(const char*) override { return false; }
+	virtual bool UpdateCurrentEntryElapsedSeconds(int) override { return false; }
+	virtual bool UpdateCurrentEntryCoverArt(void*, uint32) override { return false; }
+	virtual bool CurrentEntryDidChange() override { return false; }
+	virtual bool QueueWillChange() override { return false; }
+	virtual bool ResetQueueEntries() override { return false; }
+	virtual bool SetQueueEntry(int, int, const char*) override { return false; }
+	virtual bool SetCurrentQueueEntry(int) override { return false; }
+	virtual bool QueueDidChange() override { return false; }
+	virtual bool PlaylistWillChange() override { return false; }
+	virtual bool ResetPlaylistEntries() override { return false; }
+	virtual bool SetPlaylistEntry(int, int, const char*) override { return false; }
+	virtual bool SetCurrentPlaylistEntry(int) override { return false; }
+	virtual bool PlaylistDidChange() override { return false; }
+};
+
+static CSteamMusicRemoteStub s_MusicRemoteStub;
 
 class CSteamAPIContext
 {
@@ -49,6 +169,7 @@ public:
 	ISteamVideo* m_pSteamVideo;
 	ISteamParentalSettings* m_pSteamParentalSettings;
 	ISteamInput* m_pSteamInput;
+	ISteamAppList* m_pSteamAppList;
 
 	bool Init()
 	{
@@ -80,6 +201,7 @@ public:
 		m_pSteamVideo = (ISteamVideo*)SteamInternal_FindOrCreateUserInterface(hUser, STEAMVIDEO_INTERFACE_VERSION);
 		m_pSteamParentalSettings = (ISteamParentalSettings*)SteamInternal_FindOrCreateUserInterface(hUser, STEAMPARENTALSETTINGS_INTERFACE_VERSION);
 		m_pSteamInput = (ISteamInput*)SteamInternal_FindOrCreateUserInterface(hUser, STEAMINPUT_INTERFACE_VERSION);
+		m_pSteamAppList = (ISteamAppList*)SteamInternal_FindOrCreateUserInterface(hUser, STEAMAPPLIST_INTERFACE_VERSION);
 
 		return m_pSteamUser != nullptr && m_pSteamUtils != nullptr;
 	}
@@ -95,7 +217,7 @@ public:
 		m_pSteamRemotePlay = nullptr; m_pSteamTimeline = nullptr;
 		m_pSteamInventory = nullptr; m_pSteamHTMLSurface = nullptr;
 		m_pSteamVideo = nullptr; m_pSteamParentalSettings = nullptr;
-		m_pSteamInput = nullptr;
+		m_pSteamInput = nullptr; m_pSteamAppList = nullptr;
 	}
 
 	ISteamClient* SteamClient() { return m_pSteamClient; }
@@ -122,6 +244,8 @@ public:
 	ISteamParentalSettings* SteamParentalSettings() { return m_pSteamParentalSettings; }
 	ISteamInput* SteamInput() { return m_pSteamInput; }
 	ISteamTimeline* SteamTimeline() { return m_pSteamTimeline; }
+	ISteamAppList* SteamAppList() { return m_pSteamAppList; }
+
 };
 
 class CSteamGameServerAPIContext
@@ -193,7 +317,6 @@ extern HSteamPipe g_ServerPipe;
 extern HSteamUser g_ServerUser;
 extern ISteamClient* g_ServerClient;
 extern ISteamClient* g_pServerClient;
-extern ISteamClient* g_pSteamClientGameServer;
 extern ISteamClient* g_pSteamClientGameServer_Latest;
 extern ISteamGameServer* g_pGameServer;
 extern ISteamUtils* g_pServerUtils;
@@ -251,3 +374,4 @@ void UCOColor(WORD color, const char* text);
 void* InitSteamClient(HMODULE* phModule, bool bLocal, const char* iface);
 void LoadBreakpadSymbols(HMODULE hMod);
 void UpdateMinidumpSteamID(uint64 sid);
+void InstallBIsSubscribedAppHook();
