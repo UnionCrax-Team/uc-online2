@@ -55,26 +55,26 @@ jobs:
       - name: Package release zip
         shell: pwsh
         run: |
-          $packageRoot = "dist/uc-online2-${{ github.ref_name }}.release"
-          $archivePath = "$packageRoot.zip"
+          $packageRootrel = "dist/uc-online2-${{ github.ref_name }}-release"
+          $archivePathrel = "$packageRootrel.zip"
 
-          New-Item -ItemType Directory -Path "$packageRoot/x86" -Force | Out-Null
-          New-Item -ItemType Directory -Path "$packageRoot/x64" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$packageRootrel/x86" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$packageRootrel/x64" -Force | Out-Null
 
-          Copy-Item "relbuild/x86/steam_api.dll" "$packageRoot/x86/steam_api.dll"
-          Copy-Item "relbuild/x64/steam_api64.dll" "$packageRoot/x64/steam_api64.dll"
+          Copy-Item "relbuild/x86/steam_api.dll" "$packageRootrel/x86/steam_api.dll"
+          Copy-Item "relbuild/x64/steam_api64.dll" "$packageRootrel/x64/steam_api64.dll"
 
-          if (Test-Path $archivePath) {
-            Remove-Item $archivePath -Force
+          if (Test-Path $archivePathrel) {
+            Remove-Item $archivePathrel -Force
           }
 
-          Compress-Archive -Path $packageRoot -DestinationPath $archivePath
+          Compress-Archive -Path $packageRootrel -DestinationPath $archivePathrel
 
       - name: Package debug zip
         shell: pwsh
         run: |
-          $packageRootdeb = "dist/uc-online2-${{ github.ref_name }}.debug"
-          $archivePathdeb = "$packageRoot.zip"
+          $packageRootdeb = "dist/uc-online2-${{ github.ref_name }}-debug"
+          $archivePathdeb = "$packageRootdeb.zip"
 
           New-Item -ItemType Directory -Path "$packageRootdeb/x86" -Force | Out-Null
           New-Item -ItemType Directory -Path "$packageRootdeb/x64" -Force | Out-Null
@@ -92,11 +92,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: |
-            uc-online2-${{ github.ref_name }}.release
-            uc-online2-${{ github.ref_name }}.debug
+            uc-online2-${{ github.ref_name }}-release
+            uc-online2-${{ github.ref_name }}-debug
           path: |
-            dist/uc-online2-${{ github.ref_name }}.release.zip
-            dist/uc-online2-${{ github.ref_name }}.debug.zip
+            dist/uc-online2-${{ github.ref_name }}-release.zip
+            dist/uc-online2-${{ github.ref_name }}-debug.zip
           if-no-files-found: error
 
       - name: Publish release assets
@@ -106,7 +106,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           files: |
-            dist/uc-online2-${{ github.ref_name }}.release.zip
-            dist/uc-online2-${{ github.ref_name }}.debug.zip
+            dist/uc-online2-${{ github.ref_name }}-release.zip
+            dist/uc-online2-${{ github.ref_name }}-debug.zip
           generate_release_notes: true
           fail_on_unmatched_files: true
