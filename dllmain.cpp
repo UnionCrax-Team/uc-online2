@@ -249,54 +249,6 @@ void* InitSteamClient(HMODULE* phMod, bool bLocal, const char* iface)
 	return nullptr;
 }
 
-// ============================================================
-// BIsSubscribedApp Hook - always return true
-// Fixes games with hardcoded AppID subscription checks
-// ~ credits to xinerqu ~
-// ============================================================
-
-typedef bool (S_CALLTYPE *Fn_BIsSubscribedApp)(void*, AppId_t);
-static Fn_BIsSubscribedApp g_pfnOriginalBIsSubscribedApp = nullptr;
-
-static bool S_CALLTYPE Hooked_BIsSubscribedApp(void* pSteamApps, AppId_t appId)
-{
-    UCOLOG("[UCOnline2] BIsSubscribedApp(%u) -> hooked, returning true", appId);
-    return true;
-}
-
-void InstallBIsSubscribedAppHook()
-{
-    if (!g_bClientReady || !g_ClientCtx.SteamApps())
-    {
-        UCOLOG("[UCOnline2] Cannot install BIsSubscribedApp hook: client not ready or SteamApps is null");
-        return;
-    }
-
-    void** vtable = *reinterpret_cast<void***>(g_ClientCtx.SteamApps());
-
-    // ISteamApps vtable layout (from isteamapps.h):
-    // 0: BIsSubscribed, 1: BIsLowViolence, 2: BIsCybercafe, 3: BIsVACBanned,
-    // 4: GetCurrentGameLanguage, 5: GetAvailableGameLanguages, 6: BIsSubscribedApp
-    void* pOriginalFunc = vtable[6];
-
-    MH_STATUS mhStatus = MH_Initialize();
-    UCOLOG("[UCOnline2] MH_Initialize status: %d", mhStatus);
-
-    mhStatus = MH_CreateHook(pOriginalFunc, &Hooked_BIsSubscribedApp, reinterpret_cast<void**>(&g_pfnOriginalBIsSubscribedApp));
-    if (mhStatus == MH_OK)
-    {
-        mhStatus = MH_EnableHook(pOriginalFunc);
-        if (mhStatus == MH_OK)
-            UCOLOG("[UCOnline2] BIsSubscribedApp hook installed successfully");
-        else
-            UCOLOG("[UCOnline2] MH_EnableHook failed for BIsSubscribedApp: %d", mhStatus);
-    }
-    else
-    {
-        UCOLOG("[UCOnline2] MH_CreateHook failed for BIsSubscribedApp: %d", mhStatus);
-    }
-}
-
 
 // ============================================================
 // LoadGameOverlay

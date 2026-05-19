@@ -274,8 +274,6 @@ S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* psz
 
 			if (g_bClientReady)
 			{
-				// try and make sure this works, thank you xinerqu
-				InstallBIsSubscribedAppHook();
 
 				return k_ESteamAPIInitResult_OK;
 			}
