@@ -41,8 +41,8 @@ jobs:
         run: |
           $files = @(
             "relbuild/x86/steam_api.dll",
-            "relbuild/x64/steam_api64.dll"
-            "debbuild/x86/steam_api.dll"
+            "relbuild/x64/steam_api64.dll",
+            "debbuild/x86/steam_api.dll",
             "debbuild/x64/steam_api64.dll"
           )
 
@@ -88,15 +88,18 @@ jobs:
 
           Compress-Archive -Path $packageRootdeb -DestinationPath $archivePathdeb
 
-      - name: Upload workflow artifact
+      - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: |
-            uc-online2-${{ github.ref_name }}-release
-            uc-online2-${{ github.ref_name }}-debug
-          path: |
-            dist/uc-online2-${{ github.ref_name }}-release.zip
-            dist/uc-online2-${{ github.ref_name }}-debug.zip
+          name: uc-online2-${{ github.ref_name }}-release
+          path: dist/uc-online2-${{ github.ref_name }}-release.zip
+          if-no-files-found: error
+
+      - name: Upload debug artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uc-online2-${{ github.ref_name }}-debug
+          path: dist/uc-online2-${{ github.ref_name }}-debug.zip
           if-no-files-found: error
 
       - name: Publish release assets
