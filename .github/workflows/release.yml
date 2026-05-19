@@ -2,9 +2,9 @@ name: Build and Release DLLs
 
 on:
   push:
-    branches: |
-      main
-      refactor-uco2-v120
+    branches:
+      - main
+      - refactor-uco2-v120
     tags:
       - "v*.*.*"
   workflow_dispatch:
