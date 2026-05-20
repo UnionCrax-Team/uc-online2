@@ -248,6 +248,57 @@ public:
 
 };
 
+extern CSteamAPIContext g_ClientCtx;
+
+class CSteamAppsStub : public ISteamApps
+{
+public:
+    virtual bool BIsSubscribed() override { return true; }
+    virtual bool BIsLowViolence() override { return true; }
+    virtual bool BIsCybercafe() override { return false; }
+    virtual bool BIsVACBanned() override { return false; }
+    virtual const char *GetCurrentGameLanguage() override { return "english"; }
+    virtual const char *GetAvailableGameLanguages() override { return "english"; }
+    virtual bool BIsSubscribedApp(AppId_t appID) override { return true; }
+    virtual bool BIsDlcInstalled(AppId_t appID) override { return true; }
+    virtual uint32 GetEarliestPurchaseUnixTime(AppId_t nAppID) override { return 0; }
+    virtual bool BIsSubscribedFromFreeWeekend() override { return false; }
+    virtual int GetDLCCount() override { return 0; }
+    virtual bool BGetDLCDataByIndex(int iDLC, AppId_t *pAppID, bool *pbAvailable, char *pchName, int cchNameBufferSize) override { return false; }
+    virtual void InstallDLC(AppId_t nAppID) override {}
+    virtual void UninstallDLC(AppId_t nAppID) override {}
+    virtual void RequestAppProofOfPurchaseKey(AppId_t nAppID) override {}
+    virtual bool GetCurrentBetaName(char *pchName, int cchNameBufferSize) override { return false; }
+    virtual bool MarkContentCorrupt(bool bMissingFilesOnly) override { return false; }
+    virtual uint32 GetInstalledDepots(AppId_t appID, DepotId_t *pvecDepots, uint32 cMaxDepots) override { return 0; }
+    virtual uint32 GetAppInstallDir(AppId_t appID, char *pchFolder, uint32 cchFolderBufferSize) override { return 0; }
+    virtual bool BIsAppInstalled(AppId_t appID) override { return true; }
+
+    virtual CSteamID GetAppOwner() override { 
+        if (g_ClientCtx.SteamUser())
+            return g_ClientCtx.SteamUser()->GetSteamID();
+        return k_steamIDNil; 
+    }
+    
+    virtual const char *GetLaunchQueryParam(const char *pchKey) override { return ""; }
+    virtual bool GetDlcDownloadProgress(AppId_t nAppID, uint64 *punBytesDownloaded, uint64 *punBytesTotal) override { return false; }
+    virtual int GetAppBuildId() override { return 0; }
+    virtual void RequestAllProofOfPurchaseKeys() override {}
+    virtual SteamAPICall_t GetFileDetails(const char* pszFileName) override { return k_uAPICallInvalid; }
+    virtual int GetLaunchCommandLine(char *pszCommandLine, int cubCommandLine) override { return 0; }
+    virtual bool BIsSubscribedFromFamilySharing() override { return false; }
+    virtual bool BIsTimedTrial(uint32* punSecondsAllowed, uint32* punSecondsPlayed) override { return false; }
+    virtual bool SetDlcContext(AppId_t nAppID) override { return false; }
+    virtual int GetNumBetas(int* pnAvailable, int* pnPrivate) override { return 0; }
+    virtual bool GetBetaInfo(int iBetaIndex, uint32 *punFlags, uint32 *punBuildID, char *pchBetaName, int cchBetaName, char *pchDescription, int cchDescription) override { return false; }
+    virtual bool SetActiveBeta(const char *pchBetaName) override { return false; }
+
+private:
+    static CSteamAppsStub s_AppsStub;
+};
+
+CSteamAppsStub s_AppsStub;
+
 class CSteamGameServerAPIContext
 {
 public:
@@ -308,7 +359,6 @@ extern ISteamClient* g_pSteamClientSafe;
 extern ISteamUtils* g_pUtilsForCallbacks;
 extern ISteamController* g_pControllerForCallbacks;
 extern ISteamInput* g_pInputForCallbacks;
-extern CSteamAPIContext g_ClientCtx;
 extern bool g_bClientReady;
 extern SRWLOCK g_CtxLock;
 

@@ -350,6 +350,15 @@ BOOL WINAPI DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
 			SteamStub_Init();
 		}
 	}
+	else if (dwReason == DLL_PROCESS_DETACH)
+	{
+		UCOLOG("[UCOnline2] DllMain -> DLL_PROCESS_DETACH");
+		if (g_bSteamStubEnabled)
+		{
+			MH_DisableHook(reinterpret_cast<LPVOID*>(GetTickCount));
+			MH_Uninitialize();
+		}
+	}
 
 	return TRUE;
 }

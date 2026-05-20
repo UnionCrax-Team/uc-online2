@@ -89,6 +89,17 @@ public:
 		return (_stricmp(buf, "true") == 0 || _stricmp(buf, "1") == 0 || _stricmp(buf, "yes") == 0);
 	}
 
+	// This does not need to be set!! It will automatically run as true!!
+	bool GetForceOwnership()
+	{
+    	if (m_IniPath[0] == '\0')
+        	return true;
+    
+    	char buf[8] = { 0 };
+    		GetPrivateProfileStringA("Settings", "ForceOwnership", "true", buf, sizeof(buf), m_IniPath);
+    	return (_stricmp(buf, "true") == 0);
+	}
+
 	void LoadPlugins()
 	{
 		if (m_IniPath[0] == '\0')
