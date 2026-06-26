@@ -318,7 +318,7 @@ S_API HSteamUser S_CALLTYPE Steam_GetHSteamUserCurrent()
 {
 	UCOLOG("[UCOnline2] Steam_GetHSteamUserCurrent\r\n");
 
-	return ::Steam_GetHSteamUserCurrent();
+	return g_ClientUser;
 }
 
 S_API void S_CALLTYPE Steam_RegisterInterfaceFuncs(void* hModule)
