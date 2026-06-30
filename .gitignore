@@ -4,3 +4,6 @@ build/
 .vs/
 /relbuild
 /debbuild
+*.obj
+*.lib
+*.exp

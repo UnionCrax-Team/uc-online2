@@ -23,13 +23,8 @@ echo.
 echo [+] Building UC-Online2 (via MSBuild for stability)...
 :: Use the project file since it has all the correct flags and dependencies
 set "PROJECT=%~dp0uc_online2.vcxproj"
-set "MSBUILD="
-for /f "delims=" %%i in ('dir /b /s "C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe" 2^>nul') do (
-    if not defined MSBUILD set "MSBUILD=%%i"
-)
-
-if not defined MSBUILD (
-    echo [ERROR] MSBuild not found. Falling back to cl.exe (Risk of LNK1561)...
+set "MSBUILD=c:\program files\microsoft visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe"
+if not exist "%MSBUILD%" set "MSBUILD="
     cl.exe /nologo /D"_CRT_SECURE_NO_WARNINGS" /EHsc /LD /I"./include" /Fe:"%UC_OUT%" dllmain.cpp /link /LIBPATH:./lib libMinHook.x64.lib
 ) else (
     "%MSBUILD%" "%PROJECT%" -p:Configuration=Release -p:Platform=x64 -m
@@ -46,7 +41,7 @@ echo [SUCCESS] Generated %UC_OUT%
 :: TARGET 2: EOS Proxy (The Epic Side)
 :: ---------------------------------------------------------
 echo.
-echo [+] Building EOS Proxy...
+echo [+] Building EOS Proxy
 :: Added /LD for DLL and /O2 for optimization
 cl.exe /nologo /D"_CRT_SECURE_NO_WARNINGS" /LD /O2 /Fe:"%EOS_OUT%" eos_proxy.c
 if %errorlevel% neq 0 (

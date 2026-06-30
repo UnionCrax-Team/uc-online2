@@ -32,10 +32,10 @@
 #pragma comment(linker, "/export:EOS_AntiCheatClient_AddNotifyMessageToServer=" ORIGINAL_DLL ".EOS_AntiCheatClient_AddNotifyMessageToServer,@30")
 #pragma comment(linker, "/export:EOS_AntiCheatClient_AddNotifyPeerActionRequired=" ORIGINAL_DLL ".EOS_AntiCheatClient_AddNotifyPeerActionRequired,@31")
 #pragma comment(linker, "/export:EOS_AntiCheatClient_AddNotifyPeerAuthStatusChanged=" ORIGINAL_DLL ".EOS_AntiCheatClient_AddNotifyPeerAuthStatusChanged,@32")
-// #pragma comment(linker, "/export:EOS_AntiCheatClient_BeginSession=" ORIGINAL_DLL ".EOS_AntiCheatClient_BeginSession,@33")
+#pragma comment(linker, "/export:EOS_AntiCheatClient_BeginSession=EOS_AntiCheatClient_BeginSession,@33")
 // #pragma comment(linker, "/export:EOS_AntiCheatClient_EndSession=" ORIGINAL_DLL ".EOS_AntiCheatClient_EndSession,@34")
 #pragma comment(linker, "/export:EOS_AntiCheatClient_GetProtectMessageOutputLength=" ORIGINAL_DLL ".EOS_AntiCheatClient_GetProtectMessageOutputLength,@35")
-// #pragma comment(linker, "/export:EOS_AntiCheatClient_PollStatus=" ORIGINAL_DLL ".EOS_AntiCheatClient_PollStatus,@36")
+#pragma comment(linker, "/export:EOS_AntiCheatClient_PollStatus=EOS_AntiCheatClient_PollStatus,@36")
 // #pragma comment(linker, "/export:EOS_AntiCheatClient_ProtectMessage=" ORIGINAL_DLL ".EOS_AntiCheatClient_ProtectMessage,@37")
 #pragma comment(linker, "/export:EOS_AntiCheatClient_ReceiveMessageFromPeer=" ORIGINAL_DLL ".EOS_AntiCheatClient_ReceiveMessageFromPeer,@38")
 #pragma comment(linker, "/export:EOS_AntiCheatClient_ReceiveMessageFromServer=" ORIGINAL_DLL ".EOS_AntiCheatClient_ReceiveMessageFromServer,@39")
@@ -700,18 +700,14 @@ typedef struct {
 
 typedef struct {
     int32_t ApiVersion;
+    void* AllocateMemoryFunction;
+    void* ReallocateMemoryFunction;
+    void* ReleaseMemoryFunction;
     const char* ProductName;
     const char* ProductVersion;
     void* Reserved;
-    void* bReserved;
-    const char* ProductId;
-    const char* SandboxId;
-    const char* DeploymentId;
-    const char* OverrideCountryCode;
-    const char* OverrideLocaleCode;
-    uint32_t bIsServer;
-    const char* ErrorCode;
-    const char* ErrorMessage;
+    void* SystemInitializeOptions;
+    void* OverrideThreadAffinity;
 } EOS_InitializeOptions;
 
 // Configuration - set these via environment variable EOS_PROXY_APPID
