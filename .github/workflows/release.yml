@@ -36,6 +36,20 @@ jobs:
       - name: Build x64 version debug (steam_api64.dll)
         run: msbuild uc_online2.vcxproj -p:Configuration=Debug -p:Platform=x64 -m
 
+      - name: Build plugins (x64 release)
+        shell: pwsh
+        run: |
+          # Builds every plugins/*/*.vcxproj (Release|x64) so new plugins are
+          # picked up automatically. Release-only: the plugins link the release
+          # libMinHook.x64.lib (no debug variant), and Release is the deliverable.
+          $projs = Get-ChildItem -Path plugins -Recurse -Filter *.vcxproj
+          if (-not $projs) { throw "No plugin projects found under plugins/" }
+          foreach ($p in $projs) {
+            Write-Host "==> $($p.Name) [Release|x64]"
+            msbuild $p.FullName -p:Configuration=Release -p:Platform=x64 -m
+            if ($LASTEXITCODE -ne 0) { throw "Plugin build failed: $($p.Name)" }
+          }
+
       - name: Verify build outputs
         shell: pwsh
         run: |
@@ -64,6 +78,18 @@ jobs:
           Copy-Item "relbuild/x86/steam_api.dll" "$packageRootrel/x86/steam_api.dll"
           Copy-Item "relbuild/x64/steam_api64.dll" "$packageRootrel/x64/steam_api64.dll"
 
+          New-Item -ItemType Directory -Path "$packageRootrel/plugins" -Force | Out-Null
+          Get-ChildItem -Path plugins -Recurse -Filter *.dll |
+            Where-Object { ($_.FullName -replace '\\','/') -match '/relbuild/x64/' } |
+            ForEach-Object { Copy-Item $_.FullName "$packageRootrel/plugins/$($_.Name)" -Force }
+
+          # Photon auto-patcher: ship patch.bat + a copy of the plugin DLL at the
+          # package root so users can drop a game folder onto it from the release.
+          if (Test-Path "patch.bat") {
+            Copy-Item "patch.bat" "$packageRootrel/patch.bat" -Force
+            Copy-Item "plugins/photon_universal/relbuild/x64/photon_universal.dll" "$packageRootrel/photon_universal.dll" -Force
+          }
+
           if (Test-Path $archivePathrel) {
             Remove-Item $archivePathrel -Force
           }
@@ -81,6 +107,12 @@ jobs:
 
           Copy-Item "debbuild/x86/steam_api.dll" "$packageRootdeb/x86/steam_api.dll"
           Copy-Item "debbuild/x64/steam_api64.dll" "$packageRootdeb/x64/steam_api64.dll"
+
+          # Plugins are built Release-only; bundle the same release DLLs here too.
+          New-Item -ItemType Directory -Path "$packageRootdeb/plugins" -Force | Out-Null
+          Get-ChildItem -Path plugins -Recurse -Filter *.dll |
+            Where-Object { ($_.FullName -replace '\\','/') -match '/relbuild/x64/' } |
+            ForEach-Object { Copy-Item $_.FullName "$packageRootdeb/plugins/$($_.Name)" -Force }
 
           if (Test-Path $archivePathdeb) {
             Remove-Item $archivePathdeb -Force

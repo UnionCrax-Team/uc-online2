@@ -4,3 +4,15 @@ build/
 .vs/
 /relbuild
 /debbuild
+
+# Per-plugin / per-tool build outputs
+plugins/*/relbuild/
+plugins/*/debbuild/
+tools/*/relbuild/
+tools/*/debbuild/
+
+# Per-user IDE state
+*.vcxproj.user
+
+# Claude Code project state (auto-memory, settings)
+.claude/

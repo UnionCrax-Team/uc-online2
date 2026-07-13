@@ -503,6 +503,7 @@ extern char g_InstallPath[MAX_PATH];
 extern bool g_bHaveInstallPath;
 extern SRWLOCK g_CallbackLock;
 extern uint32 g_ForcedAppId;
+extern uint32 g_OriginalAppId;
 
 typedef void* (S_CALLTYPE* Fn_CreateInterface)(const char* pName, int* pReturnCode);
 extern Fn_CreateInterface g_pfnCreateInterface;
@@ -538,3 +539,13 @@ void UCOColor(WORD color, const char* text);
 void* InitSteamClient(HMODULE* phModule, bool bLocal, const char* iface);
 void LoadBreakpadSymbols(HMODULE hMod);
 void UpdateMinidumpSteamID(uint64 sid);
+void InstallSteamSpoofHooks();
+
+// Plugin callback patcher registry. UCO_CallbackPatcherFn is declared
+// in include/uco_plugin.h which must be included before this header.
+void UCO_RegisterCallbackPatcher(int iCallback, UCO_CallbackPatcherFn fn);
+
+// Defined in dllmain.cpp; api_client.h calls InitPlugins() on it
+// after SteamAPI_Init succeeds.
+class CDLLLoader;
+extern CDLLLoader s_PluginLoader;

@@ -4,8 +4,8 @@ Custom modified Steam API .dll for Steam games to spoof your game as Spacewar. D
 
 ## Usage
 
-__**If using downloaded .dlls from [Releases](https://github.com/veeeanti/uc-online2/releases):**__
-- 1. Extract the archive downloaded from __**LATEST**__ release (should be v1.0.1 as of currently writing this).
+__**If using downloaded .dlls from [Releases](https://github.com/LukeWarmSodas/uc-online2/releases):**__
+- 1. Extract the archive downloaded from __**LATEST**__ release (should be v1.8.0 as of currently writing this).
 - 2. Copy the corresponding .dll to replace your original .dll.
    - 2a. Rename the original .dll before copying it to something else if you feel you must back it up, something like ``steam_api_o.dll`` as Goldberg Emu suggests or ``steam_api64.dll.old``. (It doesn't matter as long as it is just changed.)
 - 3. Make sure Steam is running first. Then try running the game as you normally would from the .exe. If it has SteamStub, use Steamless to remove it or use the .dll made to bypass it for games that Steamless cannot unpack. (Dave the Diver is an example.)
@@ -71,6 +71,25 @@ plugins/
   02_second_plugin.dll
   03_another_one_(dj_khaled!!).dll
 ```
+
+### Plugin ABI (v1)
+
+Plugins that want to integrate with UCOnline2 (rather than just running DllMain side effects) can export two C functions defined in [`include/uco_plugin.h`](include/uco_plugin.h):
+
+```c
+__declspec(dllexport) int  UCO_PluginInit(const UCO_PluginContext* ctx);
+__declspec(dllexport) void UCO_PluginShutdown(void);
+```
+
+- `UCO_PluginInit` is called once after `SteamAPI_Init` succeeds. The context exposes the resolved `ISteam*` interfaces, the configured AppId / ogAppId, a logger, and a callback-patcher registration function. Return 0 for success.
+- `UCO_PluginShutdown` is called on detach (in reverse load order). Use it to disable MinHook hooks and clean up.
+
+#### What lives in core vs in a plugin
+
+Core (`steam_api64.dll`) only ships generic Steam-side spoofing:
+- `ISteamUtils::GetAppID` and `ISteamApps::BIsSubscribedApp` are vtable-hooked to report `ogAppId` so games that ask "what AppId am I, and do I own it?" get a consistent answer.
+
+Anything game-specific — ticket synthesis, `BeginAuthSession` bypass, EOSSDK hooks, custom networking, IL2CPP patches — belongs in a plugin.
 
 ## SteamStubbed
 

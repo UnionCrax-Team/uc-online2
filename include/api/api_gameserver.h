@@ -133,7 +133,7 @@ S_API bool S_CALLTYPE SteamGameServer_BSecure()
 
 S_API HSteamPipe S_CALLTYPE SteamGameServer_GetHSteamPipe()
 {
-	UCOLOG("[UCOnline2] SteamGameServer_GetHSteamPipe\r\n");
+	// Hot path (per-frame callback dispatch) -- not logged to avoid flooding the log.
 	return g_ServerPipe;
 }
 

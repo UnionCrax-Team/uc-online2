@@ -24,6 +24,8 @@
 #include <algorithm>
 #include <string>
 
+#include "uco_plugin.h"
+
 class CDLLLoader
 {
 private:
@@ -212,6 +214,7 @@ uint32 GetOgAppId()
 			if (hMod)
 			{
 				m_Modules.push_back(hMod);
+				m_Names.push_back(names[i]);
 				UCOLOG("[UCOnline2] Loaded plugin: %s", names[i].c_str());
 			}
 			else
@@ -221,15 +224,67 @@ uint32 GetOgAppId()
 		}
 	}
 
+	// Call UCO_PluginInit on every loaded plugin that exports it.
+	// Returns the number of plugins that returned 0 (success).
+	size_t InitPlugins(const UCO_PluginContext* ctx)
+	{
+		size_t ok = 0;
+		for (size_t i = 0; i < m_Modules.size(); i++)
+		{
+			HMODULE hMod = m_Modules[i];
+			if (!hMod) continue;
+
+			UCO_PluginInit_Fn pInit =
+				(UCO_PluginInit_Fn)GetProcAddress(hMod, "UCO_PluginInit");
+			if (!pInit) continue;
+
+			int rc = pInit(ctx);
+			if (rc == 0)
+			{
+				ok++;
+				UCOLOG("[UCOnline2] Plugin init OK: %s", m_Names[i].c_str());
+			}
+			else
+			{
+				UCOLOG("[UCOnline2] Plugin init returned %d: %s", rc, m_Names[i].c_str());
+			}
+		}
+		return ok;
+	}
+
+	// Call UCO_PluginShutdown on every loaded plugin (reverse load
+	// order) that exports it. Idempotent.
+	void ShutdownPlugins()
+	{
+		if (m_bShutdownCalled) return;
+		m_bShutdownCalled = true;
+
+		for (size_t ri = m_Modules.size(); ri > 0; --ri)
+		{
+			size_t i = ri - 1;
+			HMODULE hMod = m_Modules[i];
+			if (!hMod) continue;
+			UCO_PluginShutdown_Fn pShut =
+				(UCO_PluginShutdown_Fn)GetProcAddress(hMod, "UCO_PluginShutdown");
+			if (pShut) pShut();
+		}
+	}
+
 	void UnloadAll()
 	{
+		ShutdownPlugins();
 		for (size_t i = 0; i < m_Modules.size(); i++)
 		{
 			if (m_Modules[i])
 				FreeLibrary(m_Modules[i]);
 		}
 		m_Modules.clear();
+		m_Names.clear();
 	}
 
 	size_t LoadedCount() const { return m_Modules.size(); }
+
+private:
+	std::vector<std::string> m_Names;
+	bool m_bShutdownCalled = false;
 };

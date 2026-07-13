@@ -254,6 +254,29 @@ S_API const char* S_CALLTYPE SteamAPI_SteamNetworkingIPAddrRender_c_str(SteamNet
 {
 	return self->c_str();
 }
+// Diagnostic + resiliency guard for the flat ISteamClient interface
+// getters below. Steamworks.NET's CSteamAPIContext.Init() looks up
+// each interface in turn and aborts the WHOLE init on the first null
+// it gets back -- without logging which one. Under our spoofed-AppId
+// session real Steam occasionally returns null for a specific
+// interface/version, which silently fails managed SteamAPI.Init().
+// This guard logs the offending interface + requested version and
+// hands back a zero-filled stub so init survives. Interfaces the game
+// never actually calls into keep working; one it does call will fault
+// at the call site -- but by then the culprit's name is already in the
+// log, which is strictly more debuggable than a silent init failure.
+static void* UCO_FlatIfaceGuard(void* p, const char* name, const char* version)
+{
+	// Log EVERY flat getter call (success and failure) so the exact
+	// sequence CSteamAPIContext.Init() makes is visible -- the last
+	// call before the log freezes names the interface that faults.
+	UCOLOG("[UCOnline2] FLAT %s version=%s -> %s\r\n",
+	       name, version ? version : "(none)", p ? "ok" : "NULL(stub)");
+	if (p) return p;
+	static char s_FlatIfaceStub[4096] = {};
+	return (void*)s_FlatIfaceStub;
+}
+
 S_API HSteamPipe S_CALLTYPE SteamAPI_ISteamClient_CreateSteamPipe(intptr_t instancePtr)
 {
 	if (g_bServerReady == true)
@@ -318,7 +341,7 @@ S_API ISteamUser* S_CALLTYPE SteamAPI_ISteamClient_GetISteamUser(intptr_t instan
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamUser(hSteamUser, hSteamPipe, pchVersion);
+	return (ISteamUser*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamUser(hSteamUser, hSteamPipe, pchVersion), "GetISteamUser", pchVersion);
 }
 S_API ISteamGameServer* S_CALLTYPE SteamAPI_ISteamClient_GetISteamGameServer(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -351,7 +374,7 @@ S_API ISteamFriends* S_CALLTYPE SteamAPI_ISteamClient_GetISteamFriends(intptr_t 
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamFriends(hSteamUser, hSteamPipe, pchVersion);
+	return (ISteamFriends*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamFriends(hSteamUser, hSteamPipe, pchVersion), "GetISteamFriends", pchVersion);
 }
 S_API ISteamUtils* S_CALLTYPE SteamAPI_ISteamClient_GetISteamUtils(intptr_t instancePtr, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -362,7 +385,7 @@ S_API ISteamUtils* S_CALLTYPE SteamAPI_ISteamClient_GetISteamUtils(intptr_t inst
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamUtils(hSteamPipe, pchVersion);
+	return (ISteamUtils*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamUtils(hSteamPipe, pchVersion), "GetISteamUtils", pchVersion);
 }
 S_API ISteamMatchmaking* S_CALLTYPE SteamAPI_ISteamClient_GetISteamMatchmaking(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -373,7 +396,7 @@ S_API ISteamMatchmaking* S_CALLTYPE SteamAPI_ISteamClient_GetISteamMatchmaking(i
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamMatchmaking(hSteamUser, hSteamPipe, pchVersion);
+	return (ISteamMatchmaking*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamMatchmaking(hSteamUser, hSteamPipe, pchVersion), "GetISteamMatchmaking", pchVersion);
 }
 S_API ISteamMatchmakingServers* S_CALLTYPE SteamAPI_ISteamClient_GetISteamMatchmakingServers(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -384,7 +407,7 @@ S_API ISteamMatchmakingServers* S_CALLTYPE SteamAPI_ISteamClient_GetISteamMatchm
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamMatchmakingServers(hSteamUser, hSteamPipe, pchVersion);
+	return (ISteamMatchmakingServers*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamMatchmakingServers(hSteamUser, hSteamPipe, pchVersion), "GetISteamMatchmakingServers", pchVersion);
 }
 S_API void* S_CALLTYPE SteamAPI_ISteamClient_GetISteamGenericInterface(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -395,7 +418,7 @@ S_API void* S_CALLTYPE SteamAPI_ISteamClient_GetISteamGenericInterface(intptr_t 
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamGenericInterface(hSteamUser, hSteamPipe, pchVersion);
+	return (void*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamGenericInterface(hSteamUser, hSteamPipe, pchVersion), "GetISteamGenericInterface", pchVersion);
 }
 S_API ISteamUserStats* S_CALLTYPE SteamAPI_ISteamClient_GetISteamUserStats(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -406,7 +429,7 @@ S_API ISteamUserStats* S_CALLTYPE SteamAPI_ISteamClient_GetISteamUserStats(intpt
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamUserStats(hSteamUser, hSteamPipe, pchVersion);
+	return (ISteamUserStats*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamUserStats(hSteamUser, hSteamPipe, pchVersion), "GetISteamUserStats", pchVersion);
 }
 S_API ISteamGameServerStats* S_CALLTYPE SteamAPI_ISteamClient_GetISteamGameServerStats(intptr_t instancePtr, HSteamUser hSteamuser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -428,7 +451,7 @@ S_API ISteamApps* S_CALLTYPE SteamAPI_ISteamClient_GetISteamApps(intptr_t instan
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamApps(hSteamUser, hSteamPipe, pchVersion);
+	return (ISteamApps*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamApps(hSteamUser, hSteamPipe, pchVersion), "GetISteamApps", pchVersion);
 }
 S_API ISteamNetworking* S_CALLTYPE SteamAPI_ISteamClient_GetISteamNetworking(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -439,7 +462,7 @@ S_API ISteamNetworking* S_CALLTYPE SteamAPI_ISteamClient_GetISteamNetworking(int
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamNetworking(hSteamUser, hSteamPipe, pchVersion);
+	return (ISteamNetworking*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamNetworking(hSteamUser, hSteamPipe, pchVersion), "GetISteamNetworking", pchVersion);
 }
 S_API ISteamRemoteStorage* S_CALLTYPE SteamAPI_ISteamClient_GetISteamRemoteStorage(intptr_t instancePtr, HSteamUser hSteamuser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -450,7 +473,7 @@ S_API ISteamRemoteStorage* S_CALLTYPE SteamAPI_ISteamClient_GetISteamRemoteStora
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamRemoteStorage(hSteamuser, hSteamPipe, pchVersion);
+	return (ISteamRemoteStorage*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamRemoteStorage(hSteamuser, hSteamPipe, pchVersion), "GetISteamRemoteStorage", pchVersion);
 }
 S_API ISteamScreenshots* S_CALLTYPE SteamAPI_ISteamClient_GetISteamScreenshots(intptr_t instancePtr, HSteamUser hSteamuser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -461,7 +484,7 @@ S_API ISteamScreenshots* S_CALLTYPE SteamAPI_ISteamClient_GetISteamScreenshots(i
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamScreenshots(hSteamuser, hSteamPipe, pchVersion);
+	return (ISteamScreenshots*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamScreenshots(hSteamuser, hSteamPipe, pchVersion), "GetISteamScreenshots", pchVersion);
 }
 S_API uint32 S_CALLTYPE SteamAPI_ISteamClient_GetIPCCallCount(intptr_t instancePtr)
 {
@@ -505,7 +528,7 @@ S_API ISteamHTTP* S_CALLTYPE SteamAPI_ISteamClient_GetISteamHTTP(intptr_t instan
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamHTTP(hSteamuser, hSteamPipe, pchVersion);
+	return (ISteamHTTP*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamHTTP(hSteamuser, hSteamPipe, pchVersion), "GetISteamHTTP", pchVersion);
 }
 S_API ISteamController* S_CALLTYPE SteamAPI_ISteamClient_GetISteamController(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -516,7 +539,7 @@ S_API ISteamController* S_CALLTYPE SteamAPI_ISteamClient_GetISteamController(int
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamController(hSteamUser, hSteamPipe, pchVersion);
+	return (ISteamController*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamController(hSteamUser, hSteamPipe, pchVersion), "GetISteamController", pchVersion);
 }
 S_API ISteamUGC* S_CALLTYPE SteamAPI_ISteamClient_GetISteamUGC(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -527,7 +550,7 @@ S_API ISteamUGC* S_CALLTYPE SteamAPI_ISteamClient_GetISteamUGC(intptr_t instance
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamUGC(hSteamUser, hSteamPipe, pchVersion);
+	return (ISteamUGC*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamUGC(hSteamUser, hSteamPipe, pchVersion), "GetISteamUGC", pchVersion);
 }
 S_API ISteamMusic* S_CALLTYPE SteamAPI_ISteamClient_GetISteamMusic(intptr_t instancePtr, HSteamUser hSteamuser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -538,11 +561,17 @@ S_API ISteamMusic* S_CALLTYPE SteamAPI_ISteamClient_GetISteamMusic(intptr_t inst
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamMusic(hSteamuser, hSteamPipe, pchVersion);
+	return (ISteamMusic*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamMusic(hSteamuser, hSteamPipe, pchVersion), "GetISteamMusic", pchVersion);
 }
 S_API ISteamMusicRemote* S_CALLTYPE SteamAPI_ISteamClient_GetISteamMusicRemote(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char *pchVersion)
 {
-	return (ISteamMusicRemote*)SteamMusicRemote();
+	// Also on CSteamAPIContext.Init()'s mandatory path -- resolve via
+	// the generic getter and stub on null so init can't fail here.
+	void* p = nullptr;
+	if (g_bClientReady && g_ClientCtx.SteamClient())
+		p = g_ClientCtx.SteamClient()->GetISteamGenericInterface(hSteamUser, hSteamPipe, pchVersion);
+	if (!p) p = (void*)SteamMusicRemote();
+	return (ISteamMusicRemote*)UCO_FlatIfaceGuard(p, "GetISteamMusicRemote", pchVersion);
 }
 S_API ISteamHTMLSurface* S_CALLTYPE SteamAPI_ISteamClient_GetISteamHTMLSurface(intptr_t instancePtr, HSteamUser hSteamuser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -553,7 +582,7 @@ S_API ISteamHTMLSurface* S_CALLTYPE SteamAPI_ISteamClient_GetISteamHTMLSurface(i
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamHTMLSurface(hSteamuser, hSteamPipe, pchVersion);
+	return (ISteamHTMLSurface*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamHTMLSurface(hSteamuser, hSteamPipe, pchVersion), "GetISteamHTMLSurface", pchVersion);
 }
 S_API ISteamInventory* S_CALLTYPE SteamAPI_ISteamClient_GetISteamInventory(intptr_t instancePtr, HSteamUser hSteamuser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -564,7 +593,7 @@ S_API ISteamInventory* S_CALLTYPE SteamAPI_ISteamClient_GetISteamInventory(intpt
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamInventory(hSteamuser, hSteamPipe, pchVersion);
+	return (ISteamInventory*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamInventory(hSteamuser, hSteamPipe, pchVersion), "GetISteamInventory", pchVersion);
 }
 S_API ISteamVideo* S_CALLTYPE SteamAPI_ISteamClient_GetISteamVideo(intptr_t instancePtr, HSteamUser hSteamuser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -575,7 +604,7 @@ S_API ISteamVideo* S_CALLTYPE SteamAPI_ISteamClient_GetISteamVideo(intptr_t inst
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamVideo(hSteamuser, hSteamPipe, pchVersion);
+	return (ISteamVideo*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamVideo(hSteamuser, hSteamPipe, pchVersion), "GetISteamVideo", pchVersion);
 }
 S_API ISteamParentalSettings* S_CALLTYPE SteamAPI_ISteamClient_GetISteamParentalSettings(intptr_t instancePtr, HSteamUser hSteamuser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -586,7 +615,7 @@ S_API ISteamParentalSettings* S_CALLTYPE SteamAPI_ISteamClient_GetISteamParental
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamParentalSettings(hSteamuser, hSteamPipe, pchVersion);
+	return (ISteamParentalSettings*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamParentalSettings(hSteamuser, hSteamPipe, pchVersion), "GetISteamParentalSettings", pchVersion);
 }
 S_API ISteamInput* S_CALLTYPE SteamAPI_ISteamClient_GetISteamInput(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -597,7 +626,7 @@ S_API ISteamInput* S_CALLTYPE SteamAPI_ISteamClient_GetISteamInput(intptr_t inst
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamInput(hSteamUser, hSteamPipe, pchVersion);
+	return (ISteamInput*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamInput(hSteamUser, hSteamPipe, pchVersion), "GetISteamInput", pchVersion);
 }
 S_API ISteamAppList* S_CALLTYPE SteamAPI_ISteamClient_GetISteamAppList(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char * pchVersion)
 {
@@ -612,7 +641,7 @@ S_API ISteamParties* S_CALLTYPE SteamAPI_ISteamClient_GetISteamParties(intptr_t 
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamParties(hSteamUser, hSteamPipe, pchVersion);
+	return (ISteamParties*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamParties(hSteamUser, hSteamPipe, pchVersion), "GetISteamParties", pchVersion);
 }
 S_API ISteamRemotePlay* S_CALLTYPE SteamAPI_ISteamClient_GetISteamRemotePlay(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char* pchVersion)
 {
@@ -623,7 +652,7 @@ S_API ISteamRemotePlay* S_CALLTYPE SteamAPI_ISteamClient_GetISteamRemotePlay(int
 	}
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamClient()->GetISteamRemotePlay(hSteamUser, hSteamPipe, pchVersion);
+	return (ISteamRemotePlay*)UCO_FlatIfaceGuard(g_ClientCtx.SteamClient()->GetISteamRemotePlay(hSteamUser, hSteamPipe, pchVersion), "GetISteamRemotePlay", pchVersion);
 }
 S_API HSteamUser S_CALLTYPE SteamAPI_ISteamUser_GetHSteamUser(intptr_t instancePtr)
 {
@@ -8301,7 +8330,19 @@ S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamGameServerStats_StoreUserStats(in
 
 S_API intptr_t S_CALLTYPE SteamAPI_ISteamClient_GetISteamGameSearch(intptr_t instancePtr, HSteamUser hSteamUser, HSteamPipe hSteamPipe, const char *pchVersion)
 {
-	return (intptr_t)g_ClientCtx.SteamGameSearch();
+	// CRITICAL: Steamworks.NET 2025 CSteamAPIContext.Init() calls this
+	// right after GetISteamScreenshots and aborts the WHOLE managed
+	// SteamAPI.Init() if it returns zero. The cached
+	// g_ClientCtx.SteamGameSearch() is null here -- GameSearch
+	// ("SteamMatchGameSearch001") is a deprecated interface that real
+	// Steam doesn't resolve during our spoofed-AppID session, and it's
+	// not in g_ClientCtx's resolved set. Route through the generic
+	// getter and fall back to a zero-filled stub so init survives.
+	// (This was the single point that silently failed GWYF's init.)
+	void* p = nullptr;
+	if (g_bClientReady && g_ClientCtx.SteamClient())
+		p = g_ClientCtx.SteamClient()->GetISteamGenericInterface(hSteamUser, hSteamPipe, pchVersion);
+	return (intptr_t)UCO_FlatIfaceGuard(p, "GetISteamGameSearch", pchVersion);
 }
 
 S_API void S_CALLTYPE SteamAPI_ISteamGameSearch_AddGameSearchParams(intptr_t instancePtr, const char *pchKeyToFind, const char *pchValueToFind)

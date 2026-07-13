@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <vector>
 
 #define STEAM_API_EXPORTS
@@ -16,8 +17,11 @@
 
 S_API ISteamClient* g_pSteamClientGameServer = nullptr;
 
+#include <vector>
+
 #include "include/registfuncs.h"
 #include "include/callback_dispatcher.h"
+#include "include/uco_plugin.h"
 #include "include/globals.h"
 #include "include/uc_loader.h"
 #include "include/dump_handler.h"
@@ -294,13 +298,17 @@ static void LoadGameOverlay()
 // DllMain
 // ============================================================
 
+// File-scope so the SteamAPI_Init path in api_client.h can call
+// InitPlugins() on it, and DLL_PROCESS_DETACH can call
+// ShutdownPlugins().
+CDLLLoader s_PluginLoader;
+
 BOOL WINAPI DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
 {
 	if (dwReason == DLL_PROCESS_ATTACH)
 	{
 		UCOLOG("[UCOnline2] DllMain -> DLL_PROCESS_ATTACH");
 
-		static CDLLLoader s_PluginLoader;
 		s_PluginLoader.ReadConfig();
 		g_ForcedAppId = s_PluginLoader.GetAppId();
 		g_OriginalAppId = s_PluginLoader.GetOgAppId();
@@ -364,6 +372,7 @@ BOOL WINAPI DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
 	else if (dwReason == DLL_PROCESS_DETACH)
 	{
 		UCOLOG("[UCOnline2] DllMain -> DLL_PROCESS_DETACH");
+		s_PluginLoader.ShutdownPlugins();
 		if (g_bSteamStubEnabled)
 		{
 			MH_DisableHook(reinterpret_cast<LPVOID*>(GetTickCount));
@@ -379,6 +388,49 @@ BOOL WINAPI DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
 // ============================================================
 
 static bool s_bDispatcherReady = false;
+
+// ============================================================
+// Callback patcher registry
+//
+// Plugins (see include/uco_plugin.h) can register a callback
+// patcher for a specific iCallback. Patchers run -- in
+// registration order -- on every matching callback before it
+// is dispatched to the game's CCallback.
+//
+// The registry replaces the previous hard-coded auth callback
+// patching. Per-game auth behavior now lives in a plugin.
+// ============================================================
+struct CallbackPatcherEntry
+{
+    int                    iCallback;
+    UCO_CallbackPatcherFn  fn;
+};
+static std::vector<CallbackPatcherEntry> g_CallbackPatchers;
+static SRWLOCK g_CallbackPatcherLock = SRWLOCK_INIT;
+
+void UCO_RegisterCallbackPatcher(int iCallback, UCO_CallbackPatcherFn fn)
+{
+    if (!fn) return;
+    AcquireSRWLockExclusive(&g_CallbackPatcherLock);
+    g_CallbackPatchers.push_back({ iCallback, fn });
+    ReleaseSRWLockExclusive(&g_CallbackPatcherLock);
+    UCOLOG("[UCOnline2] Callback patcher registered for iCallback=%d", iCallback);
+}
+
+static void RunCallbackPatchers(int iCallback, uint8* pBuf, uint32 cbBuf)
+{
+    if (!pBuf || cbBuf == 0) return;
+    AcquireSRWLockShared(&g_CallbackPatcherLock);
+    // Iterate by index in case a patcher misbehaves and re-enters.
+    size_t n = g_CallbackPatchers.size();
+    for (size_t i = 0; i < n; i++)
+    {
+        const auto& e = g_CallbackPatchers[i];
+        if (e.iCallback == iCallback)
+            e.fn(pBuf, cbBuf);
+    }
+    ReleaseSRWLockShared(&g_CallbackPatcherLock);
+}
 
 CCallbackDispatcher::CCallbackDispatcher()
 {
@@ -521,6 +573,8 @@ void CCallbackDispatcher::DispatchFrame(HSteamPipe hPipe, bool bServer)
 								bSkip = true;
 						}
 
+						RunCallbackPatchers(msg.m_iCallback, msg.m_pubParam, msg.m_cubParam);
+
 						if (!bSkip)
 							pCb->Run(msg.m_pubParam);
 
@@ -586,6 +640,7 @@ void CCallbackDispatcher::DispatchFrameSafe(HSteamPipe hPipe, bool bServer)
 						else if (msg.m_hSteamUser == g_ClientUser && !(pCb->m_nCallbackFlags & pCb->k_ECallbackFlagsGameServer) && !bServer)
 						{
 							UCOLOG("[UCOnline2] Client callback (safe) -> %d flags=%d\r\n", msg.m_iCallback, pCb->m_nCallbackFlags);
+							RunCallbackPatchers(msg.m_iCallback, msg.m_pubParam, msg.m_cubParam);
 							pCb->Run(msg.m_pubParam);
 							break;
 						}
@@ -910,6 +965,125 @@ static DWORD WINAPI SteamStub_HookGetTickCount(void)
 	VirtualProtect(start, static_cast<SIZE_T>(end - start), oldProtect, &oldProtect);
 
 	return g_OrigGetTickCount();
+}
+
+// ============================================================
+// Generic Steam-side spoof hooks
+//
+// These are kept in core because they apply uniformly to any
+// ogAppId-spoofed setup -- they don't carry per-game logic.
+// Game-specific behaviors (auth ticket synthesis, EOS bypass,
+// etc.) live in plugins; see include/uco_plugin.h and the
+// reference Outbound plugin under plugins/outbound/.
+// ============================================================
+
+typedef uint32 (S_CALLTYPE *Fn_GetAppID)(void* pThis);
+typedef bool   (S_CALLTYPE *Fn_BIsSubscribedApp)(void* pThis, AppId_t appID);
+
+static Fn_GetAppID         g_pfnOriginalGetAppID         = nullptr;
+static Fn_BIsSubscribedApp g_pfnOriginalBIsSubscribedApp = nullptr;
+static bool                g_bGetAppIDLoggedFirst        = false;
+static bool                g_bSubscribedLoggedFirst      = false;
+
+// Many games gate multiplayer behind "do you actually own this AppId?"
+// via ISteamApps::BIsSubscribedApp(GetAppID()). Real Steam answers
+// false because the user owns Spacewar (480), not the real AppId.
+// Return true for the ogAppId.
+static bool S_CALLTYPE Hooked_BIsSubscribedApp(void* pThis, AppId_t appID)
+{
+    bool original = g_pfnOriginalBIsSubscribedApp(pThis, appID);
+    if (g_OriginalAppId != 0 && appID == g_OriginalAppId && !original)
+    {
+        if (!g_bSubscribedLoggedFirst)
+        {
+            UCOLOG("[UCOnline2] BIsSubscribedApp(%u) hook returning true (Steam says false)", appID);
+            g_bSubscribedLoggedFirst = true;
+        }
+        return true;
+    }
+    return original;
+}
+
+// Make ISteamUtils::GetAppID() report ogAppId so the rest of the
+// game stack agrees on the "real" AppId (matches the way OnlineFix
+// exposes RealAppId via the same interface).
+static uint32 S_CALLTYPE Hooked_GetAppID(void* pThis)
+{
+    uint32 original = g_pfnOriginalGetAppID(pThis);
+    if (g_OriginalAppId == 0 || g_OriginalAppId == g_ForcedAppId)
+        return original;
+
+    if (!g_bGetAppIDLoggedFirst)
+    {
+        UCOLOG("[UCOnline2] GetAppID hook returning ogAppId=%u (Steam reports %u)",
+            g_OriginalAppId, original);
+        g_bGetAppIDLoggedFirst = true;
+    }
+    return g_OriginalAppId;
+}
+
+void InstallSteamSpoofHooks()
+{
+    if (g_OriginalAppId == 0 || g_OriginalAppId == g_ForcedAppId)
+    {
+        UCOLOG("[UCOnline2] Skipping spoof hooks: no ogAppId or same as AppId");
+        return;
+    }
+
+    if (!g_bClientReady)
+    {
+        UCOLOG("[UCOnline2] Cannot install spoof hooks: client not ready");
+        return;
+    }
+
+    MH_Initialize();
+
+    // ISteamUtils vtable: [9] = GetAppID.
+    //   0:GetSecondsSinceAppActive  1:GetSecondsSinceComputerActive
+    //   2:GetConnectedUniverse  3:GetServerRealTime  4:GetIPCountry
+    //   5:GetImageSize  6:GetImageRGBA  7:GetCSERIPPort (private but
+    //   present in vtable)  8:GetCurrentBatteryPower  9:GetAppID
+    if (g_ClientCtx.SteamUtils())
+    {
+        void** utilsVT = *reinterpret_cast<void***>(g_ClientCtx.SteamUtils());
+        void* pGetAppIDFn = utilsVT[9];
+        MH_STATUS s = MH_CreateHook(pGetAppIDFn, &Hooked_GetAppID,
+            reinterpret_cast<void**>(&g_pfnOriginalGetAppID));
+        if (s == MH_OK)
+        {
+            if (MH_EnableHook(pGetAppIDFn) == MH_OK)
+                UCOLOG("[UCOnline2] GetAppID hook installed (will return %u)", g_OriginalAppId);
+            else
+                UCOLOG("[UCOnline2] MH_EnableHook failed for GetAppID");
+        }
+        else
+        {
+            UCOLOG("[UCOnline2] MH_CreateHook failed for GetAppID: %d", s);
+        }
+    }
+
+    // ISteamApps vtable: [6] = BIsSubscribedApp.
+    //   0:BIsSubscribed  1:BIsLowViolence  2:BIsCybercafe  3:BIsVACBanned
+    //   4:GetCurrentGameLanguage  5:GetAvailableGameLanguages
+    //   6:BIsSubscribedApp
+    if (g_ClientCtx.SteamApps())
+    {
+        void** appsVT = *reinterpret_cast<void***>(g_ClientCtx.SteamApps());
+        void* pSubscribedFn = appsVT[6];
+        MH_STATUS s = MH_CreateHook(pSubscribedFn, &Hooked_BIsSubscribedApp,
+            reinterpret_cast<void**>(&g_pfnOriginalBIsSubscribedApp));
+        if (s == MH_OK)
+        {
+            if (MH_EnableHook(pSubscribedFn) == MH_OK)
+                UCOLOG("[UCOnline2] BIsSubscribedApp hook installed");
+            else
+                UCOLOG("[UCOnline2] MH_EnableHook failed for BIsSubscribedApp");
+        }
+        else
+        {
+            UCOLOG("[UCOnline2] MH_CreateHook failed for BIsSubscribedApp: %d", s);
+        }
+    }
 }
 
 static void SteamStub_Init()
