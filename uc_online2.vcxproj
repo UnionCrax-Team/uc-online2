@@ -89,6 +89,10 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
+      <!-- /EHa: needed so CCallbackDispatcher::DispatchFrameSafe's catch(...)
+           can actually catch structured exceptions (access violations). With
+           the default /EHsc an AV in a game callback tears the process down. -->
+      <ExceptionHandling>Async</ExceptionHandling>
       <ControlFlowGuard>Guard</ControlFlowGuard>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)include;$(ProjectDir)include\sdk;$(ProjectDir)include\api;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -112,6 +116,10 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>NDEBUG;_WINDOWS;_USRDLL;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
+      <!-- /EHa: needed so CCallbackDispatcher::DispatchFrameSafe's catch(...)
+           can actually catch structured exceptions (access violations). With
+           the default /EHsc an AV in a game callback tears the process down. -->
+      <ExceptionHandling>Async</ExceptionHandling>
       <ControlFlowGuard>Guard</ControlFlowGuard>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)include;$(ProjectDir)include\sdk;$(ProjectDir)include\api;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -146,6 +154,10 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
+      <!-- /EHa: needed so CCallbackDispatcher::DispatchFrameSafe's catch(...)
+           can actually catch structured exceptions (access violations). With
+           the default /EHsc an AV in a game callback tears the process down. -->
+      <ExceptionHandling>Async</ExceptionHandling>
       <ControlFlowGuard>Guard</ControlFlowGuard>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)include;$(ProjectDir)include\sdk;$(ProjectDir)include\api;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -169,6 +181,10 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>NDEBUG;_WINDOWS;_USRDLL;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
+      <!-- /EHa: needed so CCallbackDispatcher::DispatchFrameSafe's catch(...)
+           can actually catch structured exceptions (access violations). With
+           the default /EHsc an AV in a game callback tears the process down. -->
+      <ExceptionHandling>Async</ExceptionHandling>
       <ControlFlowGuard>Guard</ControlFlowGuard>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)include;$(ProjectDir)include\sdk;$(ProjectDir)include\api;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -191,6 +207,10 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
+      <!-- /EHa: needed so CCallbackDispatcher::DispatchFrameSafe's catch(...)
+           can actually catch structured exceptions (access violations). With
+           the default /EHsc an AV in a game callback tears the process down. -->
+      <ExceptionHandling>Async</ExceptionHandling>
       <ControlFlowGuard>Guard</ControlFlowGuard>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)include;$(ProjectDir)include\sdk;$(ProjectDir)include\api;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -214,6 +234,10 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>NDEBUG;_WINDOWS;_USRDLL;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
+      <!-- /EHa: needed so CCallbackDispatcher::DispatchFrameSafe's catch(...)
+           can actually catch structured exceptions (access violations). With
+           the default /EHsc an AV in a game callback tears the process down. -->
+      <ExceptionHandling>Async</ExceptionHandling>
       <ControlFlowGuard>Guard</ControlFlowGuard>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)include;$(ProjectDir)include\sdk;$(ProjectDir)include\api;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>

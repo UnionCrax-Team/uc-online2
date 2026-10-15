@@ -9,10 +9,8 @@ It covers:
 - **Photon Realtime / PUN** — IL2CPP *and* Mono scripting backends
 - **Photon Fusion 2** — IL2CPP
 - **Photon Voice** — paired with a Realtime/PUN connection
-- **Unity Services auth bypass** — `SignInWithSteam` → anonymous
-- **Phasmophobia SteamAuth gate NOP** — game-specific byte-signature patch
 
-At init the plugin detects the Unity backend (Mono vs IL2CPP) by which runtime DLL is loaded, the Photon flavor (Realtime/PUN vs Fusion) by metadata/assembly scan, and the Phasmo gate by byte signature in `GameAssembly.dll`. Modules that don't apply are simply never installed.
+At init the plugin detects the Unity backend (Mono vs IL2CPP) by which runtime DLL is loaded and the Photon flavor (Realtime/PUN vs Fusion) by metadata/assembly scan. Modules that don't apply are simply never installed.
 
 ## Quick terminology
 
@@ -27,7 +25,6 @@ At init the plugin detects the Unity backend (Mono vs IL2CPP) by which runtime D
 |---|---|---|---|
 | **R.E.P.O.** | 3241660 | Mono · Realtime/PUN + Voice | Needs **two** Photon apps (one Realtime + one Voice). Voice slot is mandatory — Photon's NameServer rejects the connection if the Voice AppId still holds the dev's GUID. |
 | **PEAK** | 3527290 | Mono · Realtime/PUN + Voice | Same shape as R.E.P.O. — PUN + proximity-chat Voice, so both a Realtime and a Voice app are required. Steam-friends-invite co-op. |
-| **Phasmophobia** | 739630 | IL2CPP · Realtime/PUN | The built-in Phasmo SteamAuth gate NOP fires automatically (byte signature in `GameAssembly.dll`), NOPing the Beebyte-obfuscated ticket-verify gate that would otherwise block before Photon is reached. |
 | **Outbound** | 2681030 | IL2CPP · Fusion 2 | First Fusion target; works asset-patch-free at runtime. |
 
 ## How multiplayer auth is bypassed
@@ -35,7 +32,7 @@ At init the plugin detects the Unity backend (Mono vs IL2CPP) by which runtime D
 Photon-backed games normally authenticate with a Steam ticket validated against the *developer's* publisher key — which you don't have. The fix has two parts:
 
 1. **Redirect the game to a Photon app you control** by rewriting the Photon AppId GUID on the wire at runtime (no asset patching needed — see below).
-2. **Point that Photon app at a permissive Custom Authentication URL** (a Cloudflare Worker that always replies success), and force the wire-time auth type to `Custom`.
+2. **Point that Photon app at a permissive Custom Authentication URL** — use the shared **`https://photon.lukewarmsodas.workers.dev`** (a hosted endpoint that always replies success; nothing to deploy), and force the wire-time auth type to `Custom`.
 
 Both Photon's master/NameServer then accept the client without a real publisher key.
 
@@ -43,7 +40,7 @@ Both Photon's master/NameServer then accept the client without a real publisher 
 
 Setup is asset-patch-free — the plugin reads everything from `union-crax.ini` and rewrites AppIds on the wire at runtime, so you never modify the game's `resources.assets`.
 
-> **Shortcut:** the repo-root **`patch.bat`** automates the DLL + ini steps. Drop a game folder onto it (or run `patch.bat "C:\path\to\game"`); it detects whether the game uses Photon (Realtime/PUN or Fusion, Mono or IL2CPP, and whether it ships Voice), prompts for the real Steam AppId and your Photon GUID(s), writes `union-crax.ini` with the right section, and copies `photon_universal.dll` into `<game>\plugins\`. Non-Photon games are detected and skipped with no changes. You still create the Photon app(s) + Cloudflare Worker (steps 1–2 below) and drop in UCOnline2's `steam_api64.dll` yourself.
+> **Shortcut:** **`UCO2.Patcher.exe`** (the release GUI) automates the DLL + ini steps — point it at a game folder and it detects whether the game uses Photon (Realtime/PUN or Fusion, Mono or IL2CPP, and whether it ships Voice), prompts for the real Steam AppId and your Photon GUID(s), writes `union-crax.ini` with the right section, and copies `photon_universal.dll` into `<game>\plugins\`. Non-Photon games are detected and skipped. (The repo-root `patch.bat` CLI does the same from source.) You still create the Photon app(s) and point their Custom Auth at `https://photon.lukewarmsodas.workers.dev` (steps 1–2 below), and drop in UCOnline2's `steam_api64.dll` yourself.
 
 ### 1. Create your Photon app(s)
 
@@ -54,25 +51,44 @@ At <https://dashboard.photonengine.com/> (free, no card):
 
 Copy each app's **AppId** GUID (e.g. `4ff936cd-afb9-486b-b8e3-6ab23d915af0`).
 
-### 2. Add a permissive auth backend to each app
+### 2. Point each app at the shared Custom Auth URL
 
-On each Photon app: **Manage → Authentication → Add Provider → Custom**. Paste a Cloudflare Worker URL that always returns success, leave the mandatory key/value pairs empty, and **uncheck "Reject Clients on Authentication Failure"**. Save.
+On each Photon app you created (Realtime, Voice, Fusion — whichever apply):
+**Manage → Authentication → Add Provider → Custom**, set the URL to
 
-Worker code:
+```
+https://photon.lukewarmsodas.workers.dev
+```
+
+leave the mandatory key/value pairs empty, and **uncheck "Reject Clients on Authentication Failure"**. Save. Make sure it's the **only** Custom provider on the app — if an older URL is still listed, Photon may keep calling that one.
+
+That's it — **you don't need to host anything.** `photon.lukewarmsodas.workers.dev` is a shared, permissive endpoint that approves every request and echoes the player's Steam name back as the `Nickname` (see "Player display name" below). It knows nothing about which Photon app points at it, so it works for anyone's app.
+
+> **Set up before v1.20.17 with `https://photon.iforgor.cc`?** Change it to the URL above. That host sits behind Cloudflare Bot Fight Mode, which challenges Photon's server-to-server auth calls, so **every** login through it failed — in-game it looks like the connection hangs or times out, and the log shows `CustomAuthenticationFailed ... (403) Forbidden` (see step 5).
+
+<details>
+<summary>Prefer to self-host the auth endpoint?</summary>
+
+Deploy this to <https://workers.cloudflare.com>, then use your own `https://….workers.dev` URL in place of `photon.lukewarmsodas.workers.dev`.
+
+**Keep it on `workers.dev`** — don't route it through a custom domain on a zone with Cloudflare bot protection. Photon calls the URL from Azure datacenter IPs with an empty User-Agent, which is exactly what **Bot Fight Mode** challenges, and a challenge reaches Photon as a `403`. On the Free plan Bot Fight Mode can't be skipped per hostname, so a custom domain means turning it off for the whole zone.
 
 ```js
 export default {
-  async fetch() {
+  async fetch(request) {
+    // The plugin sends the player's Steam name as ?name=... (see "Player
+    // display name" below). Echo it back as the Nickname; fall back to a
+    // constant if it's absent.
+    const name = new URL(request.url).searchParams.get("name") || "Player";
     return new Response(JSON.stringify({
       ResultCode: 1,
       UserId: "anon-" + crypto.randomUUID(),
-      Nickname: "Player"
+      Nickname: name
     }), { headers: { "Content-Type": "application/json" } });
   }
 };
 ```
-
-Deploy at <https://workers.cloudflare.com>, copy the resulting `https://….workers.dev` URL, and paste it into **every** Photon app you created (Realtime, Voice, Fusion — whichever apply).
+</details>
 
 ### 3. Deploy the DLL
 
@@ -112,8 +128,20 @@ ForcedAuthType=0
 - `PhotonAppIdVoice` — optional. The plugin classifies peer instances at runtime (first peer = Realtime, second distinct peer = Voice) and routes the Voice peer's `params[224]` to this GUID. Required for any PUN game that ships `PhotonVoice` (like R.E.P.O.).
 - `PhotonAppIdFusion` — your Fusion app's GUID.
 - `ForcedAuthType=0` — `Custom` (matches the Custom Auth provider). Use `255` for `None` if you want pure anonymous instead.
+- `VerboseLog=1` — optional. Log **every** Photon operation response and connection-state change, not just the failures. Failed connects/logins and dropped connections are logged either way (see step 5). The patcher's **Verbose Photon logging** toggle sets it.
 
 The `[Realtime]` section is also accepted under the legacy name `[PUN]`, so inis written by older tooling keep working.
+
+### Player display name (Steam username)
+
+Games that read their nickname from the Custom Auth response (e.g. Phasmophobia) otherwise show the Worker's constant `Nickname` for *every* player. The plugin fixes this by sending the player's name to the Worker as a custom-auth parameter:
+
+- On `OpAuthenticate` it sets `params[216]` (`ClientAuthenticationParams`) to `name=<url-encoded name>`. Photon forwards that to the Custom Auth URL as `?name=...`, and the Worker echoes it back as the `Nickname` (see the Worker code above).
+- The name defaults to the **real Steam persona** — UCOnline2 proxies `ISteamFriends` straight through to real Steam, so each player gets their own Steam username automatically. No config needed.
+- Override with `[Realtime] Nickname=<text>` if you want a fixed name instead.
+- Requires the name-echoing Worker above. With the old constant-`Nickname` Worker the injected param is simply ignored (safe no-op).
+
+Log line proving it fired: `[Universal] Photon Nickname from Steam persona '…' -> params[216]=name=…`.
 
 ### 5. Launch and verify
 
@@ -128,10 +156,27 @@ The lines that prove each module fired:
 - `[Realtime] OpAuthenticate hook @ …` / `[Realtime/Mono] module active` — Realtime/PUN hooks in place.
 - `[Realtime] SendOp op=220 (Realtime peer): params[224] AppId -> …` — wire-time AppId rewrite fired (critical: PUN's `OpGetRegions` op 220 sends an *empty* ApplicationId that Photon would otherwise reject).
 - `[Fusion] OpAuthenticate: authType X -> 0` — Fusion auth-type override fired.
-- `[Auth] SignInWithSteam intercepted -> SignInAnonymouslyAsync` — Unity Services bypass fired.
-- `[Phasmo] SteamAccountGate NOPed at GameAssembly+0x…` — Phasmo gate patched (only on that specific Phasmo build; silently skipped everywhere else).
+- `[Realtime/Mono] response logging: OnOperationResponse=hooked OnStatusChanged=hooked` — the plugin can see what Photon sends **back** (below).
 
 Photon dashboard CCU going 0 → 1 confirms the connection reached your app.
+
+#### When it doesn't connect
+
+The plugin logs Photon's own answer whenever a connect, login or join fails, or the connection drops — no flag needed. The line to look for:
+
+```
+response (Realtime peer, NameServer): op=230 Authenticate FAILED -> ReturnCode 32755 CustomAuthenticationFailed: "The remote server returned an error: (403) Forbidden."
+```
+
+| What the log says | What it means |
+|---|---|
+| `CustomAuthenticationFailed` … `(403) Forbidden` | Photon called your app's Custom Auth URL and was **refused**. The app points at an old/dead worker, or the URL sits behind Cloudflare bot protection (see step 2). Re-point it at `https://photon.lukewarmsodas.workers.dev`. |
+| `CustomAuthenticationFailed` with another HTTP error | Same idea — the Custom Auth URL answered with an error. Open it in a browser; it should show `{"ResultCode":1,...}`. |
+| `InvalidAuthentication` | The AppId was rejected — usually a Realtime GUID in the Voice slot or vice versa (see "Why two Photon apps" below). |
+| `MaxCcuReached` | Your Photon app is at its free-tier CCU limit. |
+| `status … TimeoutDisconnect` / `DisconnectByServer…` | The connection itself dropped — network or firewall, not configuration. |
+
+With `[Realtime] VerboseLog=1` you also get every successful step (`GetRegions -> Ok`, `Authenticate -> Ok`, …), which shows how far a connection got.
 
 ## Why two Photon apps for PUN+Voice games?
 
@@ -160,13 +205,9 @@ Output: `plugins\photon_universal\relbuild\x64\photon_universal.dll`. MinHook is
 
 - **Realtime/PUN (IL2CPP & Mono):** hooks `LoadBalancingPeer.OpAuthenticate` / `OpAuthenticateOnce` (rewrite `appId`, force `authType=0`), `PhotonPeer.SendOperation` (rewrite `params[224]` ApplicationId + `params[217]` auth type for ops 220/226/230/231), and `AuthenticationValues.set_AuthType`. A per-peer classifier routes the first peer to the Realtime AppId and the second distinct peer to the Voice AppId.
 - **Fusion 2:** hooks `PhotonAppSettings.get_Global` (rewrite `AppIdFusion`), `AuthenticationValues.set_AuthType`, and `LoadBalancingPeer.OpAuthenticate`/`OpAuthenticateOnce` (force `authType` at offset 0x10 on the wire).
-- **Unity Services auth bypass:** hooks `Unity.Services.Authentication.AuthenticationServiceInternal.SignInWithSteamAsync` and redirects to anonymous sign-in.
-- **Phasmo gate:** verifies the byte signature before patching (so non-Phasmo / new-build games are skipped), then NOPs the `SteamAccountGate` in `GameAssembly.dll`.
-
 ## Limitations
 
 - Players must share the same Photon AppId(s).
 - The Cloudflare Worker accepts every auth request — don't reuse that Photon app for anything real.
 - Photon free tier caps CCU (~20) — fine for friend groups, not public servers.
 - Anti-cheat blocks this — don't try it on EAC/BattlEye titles.
-- The Phasmo gate NOP is keyed to a specific build's byte signature; after a Phasmo update it silently no-ops until the signature is re-located. For other deeply-obfuscated games whose own UI gates multiplayer on auth state, you may still need the standalone [`unity_auth_bypass`](../unity_auth_bypass/) plugin.

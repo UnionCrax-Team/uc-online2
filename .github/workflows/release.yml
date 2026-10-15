@@ -24,6 +24,86 @@ jobs:
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Stamp DLL version resource from tag
+        shell: pwsh
+        run: |
+          # The DLL version resource (uc_online2.rc) reads its numbers from
+          # include/version.h. On a tagged release, regenerate that header from
+          # the tag so every built DLL carries the release version with no manual
+          # edit. Non-tag builds (branch pushes) keep the committed fallback.
+          $ref = "${{ github.ref_name }}"
+          if ($ref -match '^v(\d+)\.(\d+)\.(\d+)') {
+            $csv = "$($Matches[1]),$($Matches[2]),$($Matches[3]),0"
+            $str = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
+            $lines = @(
+              '#ifndef UCO2_VERSION_H',
+              '#define UCO2_VERSION_H',
+              "#define VER_FILEVERSION      $csv",
+              "#define VER_FILEVERSION_STR  ""$str""",
+              '#endif'
+            )
+            Set-Content -LiteralPath include/version.h -Value $lines -Encoding ASCII
+            Write-Host "Stamped DLL version resource -> $str"
+          } else {
+            Write-Host "Non-tag build ($ref); keeping committed include/version.h"
+          }
+
+      - name: Stamp EOS default app creds from secrets
+        shell: pwsh
+        env:
+          EOS_PRODUCT_ID:    ${{ secrets.EOS_PRODUCT_ID }}
+          EOS_SANDBOX_ID:    ${{ secrets.EOS_SANDBOX_ID }}
+          EOS_DEPLOYMENT_ID: ${{ secrets.EOS_DEPLOYMENT_ID }}
+          EOS_CLIENT_ID:     ${{ secrets.EOS_CLIENT_ID }}
+          EOS_CLIENT_SECRET: ${{ secrets.EOS_CLIENT_SECRET }}
+        run: |
+          # Bake the project's DEFAULT Epic app into EOS_custom.dll so the redirect
+          # works with no Epic app of the user's own. Regenerates the committed
+          # (empty) plugins/EOS_custom/eos_baked_creds.h. Empty secrets (forks / PRs
+          # without access) keep the empty placeholders = ini-only, no behavior
+          # change. A user's own COMPLETE [EOS] block in union-crax.ini still
+          # overrides these at runtime (see LoadEosConfig).
+          # Secrets configured -> every field must be WELL-FORMED, not merely present.
+          # A malformed value (a pasted "undefined" shipped in v1.20.14) bakes a DLL
+          # that looks fine and then fails Epic auth at runtime, so fail loudly here
+          # rather than ship a silently-broken default. Lengths only -- never values.
+          if ($env:EOS_PRODUCT_ID -or $env:EOS_CLIENT_SECRET) {
+            $fields = [ordered]@{
+              'EOS_PRODUCT_ID'    = $env:EOS_PRODUCT_ID
+              'EOS_SANDBOX_ID'    = $env:EOS_SANDBOX_ID
+              'EOS_DEPLOYMENT_ID' = $env:EOS_DEPLOYMENT_ID
+              'EOS_CLIENT_ID'     = $env:EOS_CLIENT_ID
+              'EOS_CLIENT_SECRET' = $env:EOS_CLIENT_SECRET
+            }
+            foreach ($name in $fields.Keys) {
+              $v = [string]$fields[$name]
+              Write-Host "  $name length=$($v.Length)"
+              if ([string]::IsNullOrWhiteSpace($v)) { throw "$name is empty or whitespace" }
+              if ($v -match '^(undefined|null|none|nil|todo|changeme)$') { throw "$name looks like a placeholder, not a credential" }
+              if ($v.Length -lt 16) { throw "$name is implausibly short ($($v.Length) chars)" }
+              if ($v -notmatch '^[A-Za-z0-9+/=_-]+$') { throw "$name contains characters no EOS credential should have" }
+            }
+            $lines = @(
+              '#ifndef UCO_EOS_BAKED_CREDS_H',
+              '#define UCO_EOS_BAKED_CREDS_H',
+              "#define UCO_EOS_BAKED_PRODUCTID    ""$env:EOS_PRODUCT_ID""",
+              "#define UCO_EOS_BAKED_SANDBOXID    ""$env:EOS_SANDBOX_ID""",
+              "#define UCO_EOS_BAKED_DEPLOYMENTID ""$env:EOS_DEPLOYMENT_ID""",
+              "#define UCO_EOS_BAKED_CLIENTID     ""$env:EOS_CLIENT_ID""",
+              "#define UCO_EOS_BAKED_CLIENTSECRET ""$env:EOS_CLIENT_SECRET""",
+              '#endif'
+            )
+            Set-Content -LiteralPath plugins/EOS_custom/eos_baked_creds.h -Value $lines -Encoding ASCII
+            Write-Host "Baked EOS default app creds (Product=$($env:EOS_PRODUCT_ID))"
+          } else {
+            Write-Host "EOS_* secrets not set; keeping empty placeholders (ini-only build)"
+          }
+
       - name: Build x86 version (steam_api.dll)
         run: msbuild uc_online2.vcxproj -p:Configuration=Release -p:Platform=Win32 -m
 
@@ -50,6 +130,43 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Plugin build failed: $($p.Name)" }
           }
 
+      - name: Verify EOS creds actually baked into EOS_custom.dll
+        shell: pwsh
+        env:
+          EOS_PRODUCT_ID:    ${{ secrets.EOS_PRODUCT_ID }}
+          EOS_CLIENT_SECRET: ${{ secrets.EOS_CLIENT_SECRET }}
+        run: |
+          # The bake is invisible until an EOS game fails auth in someone's hands, so
+          # prove the literals reached the binary before we ship it. v1.20.14 shipped
+          # with ClientSecret="undefined" and nothing caught it.
+          if (-not $env:EOS_PRODUCT_ID) {
+            Write-Host "No EOS secrets for this build; skipping bake verification (ini-only)"
+            return
+          }
+          $dll = "plugins/EOS_custom/relbuild/x64/EOS_custom.dll"
+          if (-not (Test-Path $dll)) { throw "EOS_custom.dll not found at $dll" }
+          $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($dll))
+          foreach ($f in @(@{n='ProductId';v=$env:EOS_PRODUCT_ID}, @{n='ClientSecret';v=$env:EOS_CLIENT_SECRET})) {
+            if ($text.Contains($f.v)) { Write-Host "  [OK] $($f.n) baked into EOS_custom.dll" }
+            else { throw "$($f.n) is NOT baked into EOS_custom.dll -- refusing to ship an inert/broken EOS default" }
+          }
+
+      - name: Test GUI patcher core
+        run: dotnet run --project tools/UCO2.Patcher/UCO2.Patcher.Tests/UCO2.Patcher.Tests.csproj -c Release
+
+      - name: Publish GUI patcher
+        shell: pwsh
+        run: |
+          dotnet publish tools/UCO2.Patcher/UCO2.Patcher.Gui/UCO2.Patcher.Gui.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:InformationalVersion=${{ github.ref_name }} `
+            -p:DebugType=None -o tools/UCO2.Patcher/publish
+          if ($LASTEXITCODE -ne 0) { throw "GUI patcher publish failed" }
+          # No version.txt: the version is baked into the exe (InformationalVersion)
+          # and the updater reads the latest release from the GitHub API tag. Only
+          # pre-1.20.3 installs used a shipped version.txt; that shim is now retired.
+
       - name: Verify build outputs
         shell: pwsh
         run: |
@@ -57,7 +174,9 @@ jobs:
             "relbuild/x86/steam_api.dll",
             "relbuild/x64/steam_api64.dll",
             "debbuild/x86/steam_api.dll",
-            "debbuild/x64/steam_api64.dll"
+            "debbuild/x64/steam_api64.dll",
+            "plugins/steam_overlay/relbuild/x64/overlay_proxy.dll",
+            "tools/UCO2.Patcher/publish/UCO2.Patcher.exe"
           )
 
           foreach ($file in $files) {
@@ -66,11 +185,37 @@ jobs:
             }
           }
 
+      - name: Sign Steam API DLLs
+        shell: pwsh
+        run: |
+          # Some games gate on the emulator DLL carrying an embedded Authenticode
+          # signature -- e.g. Risk of Rain 2's SteamApiValidator only checks
+          # CryptQueryObject content-type 10 (a signature is PRESENT), never
+          # WinVerifyTrust, so it does not care that the cert is self-signed or
+          # not Valve's. An unsigned DLL is rejected; any signature passes.
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=UCOnline2" `
+            -CertStoreLocation Cert:\CurrentUser\My -KeyUsage DigitalSignature -KeySpec Signature `
+            -NotAfter (Get-Date).AddYears(20)
+          $dlls = @(
+            "relbuild/x64/steam_api64.dll",
+            "relbuild/x86/steam_api.dll",
+            "debbuild/x64/steam_api64.dll",
+            "debbuild/x86/steam_api.dll"
+          )
+          foreach ($dll in $dlls) {
+            Set-AuthenticodeSignature -FilePath $dll -Certificate $cert | Out-Null
+            $sig = Get-AuthenticodeSignature $dll
+            if (-not $sig.SignerCertificate) { throw "Signing produced no signature on $dll" }
+            Write-Host "signed $dll -> $($sig.Status) / $($sig.SignerCertificate.Subject)"
+          }
+
       - name: Package release zip
         shell: pwsh
         run: |
-          $packageRootrel = "dist/uc-online2-${{ github.ref_name }}-release"
-          $archivePathrel = "$packageRootrel.zip"
+          # Folder name is PLAIN (unversioned) so it stays stable across
+          # auto-updates; only the ZIP name carries the version.
+          $packageRootrel = "dist/uc-online2-release"
+          $archivePathrel = "dist/uc-online2-${{ github.ref_name }}-release.zip"
 
           New-Item -ItemType Directory -Path "$packageRootrel/x86" -Force | Out-Null
           New-Item -ItemType Directory -Path "$packageRootrel/x64" -Force | Out-Null
@@ -83,11 +228,15 @@ jobs:
             Where-Object { ($_.FullName -replace '\\','/') -match '/relbuild/x64/' } |
             ForEach-Object { Copy-Item $_.FullName "$packageRootrel/plugins/$($_.Name)" -Force }
 
-          # Photon auto-patcher: ship patch.bat + a copy of the plugin DLL at the
-          # package root so users can drop a game folder onto it from the release.
-          if (Test-Path "patch.bat") {
-            Copy-Item "patch.bat" "$packageRootrel/patch.bat" -Force
-            Copy-Item "plugins/photon_universal/relbuild/x64/photon_universal.dll" "$packageRootrel/photon_universal.dll" -Force
+          Copy-Item "tools/UCO2.Patcher/publish/UCO2.Patcher.exe" "$packageRootrel/UCO2.Patcher.exe" -Force
+
+          # coherence schema pipeline. Needs the Unity editor, so it is a
+          # separate opt-in tool rather than something patch.bat can run --
+          # shipped because pointing a coherence game at your own project is
+          # otherwise a manual editor dance.
+          if (Test-Path "tools/coherence_schema") {
+            New-Item -ItemType Directory -Path "$packageRootrel/tools/coherence_schema" -Force | Out-Null
+            Copy-Item "tools/coherence_schema/*" "$packageRootrel/tools/coherence_schema/" -Recurse -Force
           }
 
           if (Test-Path $archivePathrel) {
@@ -99,8 +248,9 @@ jobs:
       - name: Package debug zip
         shell: pwsh
         run: |
-          $packageRootdeb = "dist/uc-online2-${{ github.ref_name }}-debug"
-          $archivePathdeb = "$packageRootdeb.zip"
+          # Plain (unversioned) folder name; versioned ZIP name only.
+          $packageRootdeb = "dist/uc-online2-debug"
+          $archivePathdeb = "dist/uc-online2-${{ github.ref_name }}-debug.zip"
 
           New-Item -ItemType Directory -Path "$packageRootdeb/x86" -Force | Out-Null
           New-Item -ItemType Directory -Path "$packageRootdeb/x64" -Force | Out-Null
@@ -113,6 +263,8 @@ jobs:
           Get-ChildItem -Path plugins -Recurse -Filter *.dll |
             Where-Object { ($_.FullName -replace '\\','/') -match '/relbuild/x64/' } |
             ForEach-Object { Copy-Item $_.FullName "$packageRootdeb/plugins/$($_.Name)" -Force }
+
+          Copy-Item "tools/UCO2.Patcher/publish/UCO2.Patcher.exe" "$packageRootdeb/UCO2.Patcher.exe" -Force
 
           if (Test-Path $archivePathdeb) {
             Remove-Item $archivePathdeb -Force
@@ -143,5 +295,8 @@ jobs:
           files: |
             dist/uc-online2-${{ github.ref_name }}-release.zip
             dist/uc-online2-${{ github.ref_name }}-debug.zip
+          body: |
+            > ⚠️ **`UCO2.Patcher.exe` (the GUI patcher) is experimental.** If it
+            > misbehaves, run `patch.bat /legacy` for the original interactive flow.
           generate_release_notes: true
           fail_on_unmatched_files: true

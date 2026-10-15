@@ -15,6 +15,11 @@ jobs:
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
       - name: Build release Win32 DLL
         run: msbuild uc_online2.vcxproj -p:Configuration=Release -p:Platform=Win32 -m
 
@@ -27,14 +32,28 @@ jobs:
       - name: Build debug x64 DLL
         run: msbuild uc_online2.vcxproj -p:Configuration=Debug -p:Platform=x64 -m
 
+      - name: Test GUI patcher core
+        run: dotnet run --project tools/UCO2.Patcher/UCO2.Patcher.Tests/UCO2.Patcher.Tests.csproj -c Release
+
+      - name: Publish GUI patcher
+        shell: pwsh
+        run: |
+          dotnet publish tools/UCO2.Patcher/UCO2.Patcher.Gui/UCO2.Patcher.Gui.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:InformationalVersion=pr-${{ github.event.pull_request.number }} `
+            -p:DebugType=None -o tools/UCO2.Patcher/publish
+          if ($LASTEXITCODE -ne 0) { throw "GUI patcher publish failed" }
+
       - name: Verify build outputs
         shell: pwsh
         run: |
           $files = @(
             "relbuild/x86/steam_api.dll",
-            "relbuild/x64/steam_api64.dll"
+            "relbuild/x64/steam_api64.dll",
             "debbuild/x86/steam_api.dll",
-            "debbuild/x64/steam_api64.dll"
+            "debbuild/x64/steam_api64.dll",
+            "tools/UCO2.Patcher/publish/UCO2.Patcher.exe"
           )
 
           foreach ($file in $files) {
@@ -54,6 +73,7 @@ jobs:
 
           Copy-Item "relbuild/x86/steam_api.dll" "$packageRoot/x86/steam_api.dll"
           Copy-Item "relbuild/x64/steam_api64.dll" "$packageRoot/x64/steam_api64.dll"
+          Copy-Item "tools/UCO2.Patcher/publish/UCO2.Patcher.exe" "$packageRoot/UCO2.Patcher.exe" -Force
 
           if (Test-Path $archivePath) {
             Remove-Item $archivePath -Force
@@ -65,13 +85,14 @@ jobs:
         shell: pwsh
         run: |
           $packageRootdeb = "dist/uc-online2-${{ github.ref_name }}.debug"
-          $archivePathdeb = "$packageRoot.zip"
+          $archivePathdeb = "$packageRootdeb.zip"
 
           New-Item -ItemType Directory -Path "$packageRootdeb/x86" -Force | Out-Null
           New-Item -ItemType Directory -Path "$packageRootdeb/x64" -Force | Out-Null
 
           Copy-Item "debbuild/x86/steam_api.dll" "$packageRootdeb/x86/steam_api.dll"
           Copy-Item "debbuild/x64/steam_api64.dll" "$packageRootdeb/x64/steam_api64.dll"
+          Copy-Item "tools/UCO2.Patcher/publish/UCO2.Patcher.exe" "$packageRootdeb/UCO2.Patcher.exe" -Force
 
           if (Test-Path $archivePathdeb) {
             Remove-Item $archivePathdeb -Force

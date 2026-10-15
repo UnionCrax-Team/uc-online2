@@ -1,0 +1,377 @@
+<Window x:Class="UCO2.Patcher.Gui.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="UCOnline2 Patcher" Width="860" Height="800" MinWidth="720" MinHeight="640"
+        Background="{StaticResource WindowBrush}" Foreground="{StaticResource TextBrush}"
+        WindowStartupLocation="CenterScreen">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />   <!-- title bar -->
+            <RowDefinition Height="*" />      <!-- sectioned flow -->
+            <RowDefinition Height="Auto" />   <!-- status bar -->
+            <RowDefinition Height="Auto" />   <!-- details strip (hidden until Review) -->
+            <RowDefinition Height="Auto" />   <!-- footer actions -->
+        </Grid.RowDefinitions>
+
+        <!-- ================= TITLE BAR ================= -->
+        <Border Grid.Row="0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+            <Grid Margin="16,10">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="UCOnline2 Patcher" FontSize="15" FontWeight="Bold" Foreground="{StaticResource TextBrightBrush}" />
+                    <Border Background="{StaticResource WarnBgBrush}" BorderBrush="{StaticResource WarnBrush}" BorderThickness="1" Margin="10,0,0,0" Padding="6,2" VerticalAlignment="Center">
+                        <TextBlock Text="EXPERIMENTAL" Foreground="{StaticResource WarnBrush}" FontSize="10" FontWeight="Bold" />
+                    </Border>
+                    <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="8,0,0,0" Padding="6,2" VerticalAlignment="Center">
+                        <TextBlock x:Name="VersionText" Foreground="{StaticResource FaintBrush}" FontSize="11" />
+                    </Border>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Style="{StaticResource GhostButton}" Content="Check for updates" Click="CheckUpdates_Click" />
+                    <Button Style="{StaticResource GhostButton}" Content="Run as admin &#x2191;" Click="RunElevated_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ================= SECTIONED FLOW ================= -->
+        <ScrollViewer Grid.Row="1" x:Name="OptionsScroller" VerticalScrollBarVisibility="Auto" Loaded="OptionsScroller_Loaded">
+            <StackPanel>
+
+                <!-- 01 PICK GAME -->
+                <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderSoftBrush}" BorderThickness="0,0,0,1">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="3" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Border Background="{StaticResource AccentBrush}" />
+                        <StackPanel Grid.Column="1" Margin="16,15,16,17">
+                            <TextBlock Margin="0,0,0,10">
+                                <Run Text="01" Foreground="{StaticResource AccentBrush}" FontWeight="Bold" /><Run Text="   PICK YOUR GAME" Foreground="{StaticResource TextBrightBrush}" FontWeight="Bold" FontSize="11" />
+                            </TextBlock>
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <TextBox x:Name="FolderPathBox" IsReadOnly="True" VerticalContentAlignment="Center" />
+                                <Button Grid.Column="1" Content="Browse&#x2026;" MinWidth="96" Click="BrowseFolder_Click" />
+                            </Grid>
+                            <TextBlock x:Name="FolderHintText" Text="Choose the folder containing the game executable" Foreground="{StaticResource FaintBrush}" FontSize="11.5" Margin="1,7,0,0" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- 02 DETECTED -->
+                <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderSoftBrush}" BorderThickness="0,0,0,1">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="3" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Border Background="{StaticResource AccentBrush}" />
+                        <StackPanel Grid.Column="1" Margin="16,15,16,17">
+                            <TextBlock Margin="0,0,0,10">
+                                <Run Text="02" Foreground="{StaticResource AccentBrush}" FontWeight="Bold" /><Run Text="   DETECTED" Foreground="{StaticResource TextBrightBrush}" FontWeight="Bold" FontSize="11" />
+                            </TextBlock>
+
+                            <TextBlock x:Name="SelectedTitle" Text="No game selected" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource TextBrightBrush}" />
+                            <TextBlock x:Name="SelectedPath" Foreground="{StaticResource FaintBrush}" FontSize="11.5" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+
+                            <!-- detection: two flat bordered boxes -->
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Border Background="{StaticResource PanelAltBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="12,10">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="82" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                                        <TextBlock Text="Engine" Foreground="{StaticResource FaintBrush}" FontWeight="SemiBold" Margin="0,4" /><TextBlock x:Name="EngineValue" Grid.Column="1" Margin="0,4" TextWrapping="Wrap" />
+                                        <TextBlock Grid.Row="1" Text="Executable" Foreground="{StaticResource FaintBrush}" FontWeight="SemiBold" Margin="0,4" /><TextBlock x:Name="ExecutableValue" Grid.Row="1" Grid.Column="1" Margin="0,4" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Row="2" Text="Steam API" Foreground="{StaticResource FaintBrush}" FontWeight="SemiBold" Margin="0,4" /><TextBlock x:Name="SteamApiValue" Grid.Row="2" Grid.Column="1" Margin="0,4" TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                </Border>
+                                <Border Grid.Column="2" Background="{StaticResource PanelAltBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="12,10">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="90" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                                        <TextBlock Text="Config" Foreground="{StaticResource FaintBrush}" FontWeight="SemiBold" Margin="0,4" /><TextBlock x:Name="ConfigValue" Grid.Column="1" Margin="0,4" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Row="1" Text="Services" Foreground="{StaticResource FaintBrush}" FontWeight="SemiBold" Margin="0,4" /><TextBlock x:Name="ServicesValue" Grid.Row="1" Grid.Column="1" Margin="0,4" TextWrapping="Wrap" />
+                                        <TextBlock Grid.Row="2" Text="SteamStub" Foreground="{StaticResource FaintBrush}" FontWeight="SemiBold" Margin="0,4" /><TextBlock x:Name="SteamStubValue" Grid.Row="2" Grid.Column="1" Margin="0,4" />
+                                    </Grid>
+                                </Border>
+                            </Grid>
+
+                            <!-- warnings -->
+                            <ItemsControl x:Name="WarningList" Margin="0,10,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource WarnBgBrush}" BorderBrush="{StaticResource WarnBrush}" BorderThickness="1" Padding="10,7" Margin="0,0,0,6">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="&#x26A0;  " Foreground="{StaticResource WarnBrush}" />
+                                                <TextBlock Text="{Binding}" Foreground="{StaticResource WarnBrush}" TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <!-- steam match -->
+                            <Grid Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="118" /></Grid.ColumnDefinitions>
+                                <TextBlock Text="STEAM MATCH" Foreground="{StaticResource FaintBrush}" FontSize="11" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <ComboBox x:Name="SteamMatchBox" Grid.Column="1" Height="30" VerticalContentAlignment="Center" SelectionChanged="SteamMatchBox_SelectionChanged" />
+                                <Grid Grid.Column="2" Margin="8,0,0,0">
+                                    <TextBox x:Name="OriginalAppIdBox" Height="30" VerticalContentAlignment="Center" ToolTip="Game Steam AppId"
+                                             TextChanged="OriginalAppIdBox_TextChanged" />
+                                    <TextBlock x:Name="OriginalAppIdPlaceholder" Text="AppId" Foreground="{StaticResource FaintBrush}"
+                                               Margin="9,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" />
+                                </Grid>
+                            </Grid>
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <TextBlock x:Name="SteamSearchStatus" Text="Selected folder name will be searched on Steam" Foreground="{StaticResource FaintBrush}" FontSize="11.5" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="Scan again" Click="ScanAgain_Click" />
+                            </Grid>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- 03 OPTIONS -->
+                <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderSoftBrush}" BorderThickness="0,0,0,1">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="3" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Border Background="{StaticResource AccentBrush}" />
+                        <StackPanel Grid.Column="1" Margin="16,15,16,18">
+                            <Grid Margin="0,0,0,10">
+                                <TextBlock>
+                                    <Run Text="03" Foreground="{StaticResource AccentBrush}" FontWeight="Bold" /><Run Text="   FIX OPTIONS" Foreground="{StaticResource TextBrightBrush}" FontWeight="Bold" FontSize="11" />
+                                </TextBlock>
+                                <TextBlock Text="recommended defaults active" HorizontalAlignment="Right" Foreground="{StaticResource FaintBrush}" FontSize="11.5" />
+                            </Grid>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Border Background="{StaticResource PanelAltBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="13,12">
+                                    <StackPanel>
+                                        <TextBlock Text="CORE" Foreground="{StaticResource MutedBrush}" FontSize="11" FontWeight="Bold" Margin="0,0,0,10" />
+                                        <ToggleButton x:Name="OverlayCheck" Style="{StaticResource OptionToggle}" Content="Overlay proxy" IsChecked="True" />
+                                        <ToggleButton x:Name="LoadOverlayCheck" Style="{StaticResource OptionToggle}" Content="Steam overlay" IsChecked="True" />
+                                        <ToggleButton x:Name="UnlockDlcCheck" Style="{StaticResource OptionToggle}" Content="Unlock DLC" IsChecked="True" />
+                                        <ToggleButton x:Name="QuarantineCheck" Style="{StaticResource OptionToggle}" Content="Remove competing loaders" IsChecked="True" />
+                                        <ToggleButton x:Name="ForceOwnershipCheck" Style="{StaticResource OptionToggle}" Content="Force ownership" IsChecked="True" Margin="0" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Grid.Column="2" Background="{StaticResource PanelAltBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="13,12">
+                                    <StackPanel>
+                                        <TextBlock Text="PLUGINS" Foreground="{StaticResource MutedBrush}" FontSize="11" FontWeight="Bold" Margin="0,0,0,10" />
+                                        <ToggleButton x:Name="EosCheck" Style="{StaticResource OptionToggle}" Content="EOS custom" Click="BackendCheck_Toggled" />
+                                        <ToggleButton x:Name="PhotonCheck" Style="{StaticResource OptionToggle}" Content="Photon" Click="BackendCheck_Toggled" />
+                                        <ToggleButton x:Name="PlayFabCheck" Style="{StaticResource OptionToggle}" Content="PlayFab" Click="BackendCheck_Toggled" />
+                                        <ToggleButton x:Name="CoherenceCheck" Style="{StaticResource OptionToggle}" Content="coherence" Margin="0" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <!-- advanced -->
+                            <Expander x:Name="AdvancedExpander" Header="Advanced &amp; runtime settings" IsExpanded="False" Margin="0,12,0,0" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold">
+                                <StackPanel Margin="0,12,0,0">
+                                    <!-- EOS: at the top, highlighted yellow when its credentials are required -->
+                                    <Border x:Name="EosCredsGroup" Background="{StaticResource PanelAltBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="13,12" Margin="0,0,0,10">
+                                        <StackPanel>
+                                            <Grid Margin="0,0,0,8">
+                                                <TextBlock Text="EOS &#x2014; EPIC APP (OPTIONAL)" Foreground="{StaticResource MutedBrush}" FontSize="11" FontWeight="Bold" />
+                                                <Border x:Name="EosRequiredBadge" HorizontalAlignment="Right" Background="{StaticResource WarnBgBrush}" BorderBrush="{StaticResource WarnBrush}" BorderThickness="1" Padding="7,1" Visibility="Collapsed">
+                                                    <TextBlock Text="REQUIRED" Foreground="{StaticResource WarnBrush}" FontSize="10" FontWeight="Bold" />
+                                                </Border>
+                                            </Grid>
+                                            <ToggleButton x:Name="EosKeepGameAppCheck" Style="{StaticResource OptionToggle}" Margin="0,0,0,10"
+                                                          Content="Use the game's own Epic app &#x2014; Device ID login, no redirect (no credentials needed)"
+                                                          Click="BackendCheck_Toggled" />
+                                            <TextBlock Text="Leave the fields below blank to use the built-in default Epic app. Fill all five only to redirect to your own app instead."
+                                                       Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10" />
+                                            <Grid>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                                                <TextBlock Text="ProductId" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="EosProductBox" Grid.Column="1" Margin="0,3" TextChanged="BackendField_Changed" />
+                                                <TextBlock Grid.Row="1" Text="SandboxId" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="EosSandboxBox" Grid.Row="1" Grid.Column="1" Margin="0,3" TextChanged="BackendField_Changed" />
+                                                <TextBlock Grid.Row="2" Text="DeploymentId" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="EosDeploymentBox" Grid.Row="2" Grid.Column="1" Margin="0,3" TextChanged="BackendField_Changed" />
+                                                <TextBlock Grid.Row="3" Text="ClientId" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="EosClientBox" Grid.Row="3" Grid.Column="1" Margin="0,3" TextChanged="BackendField_Changed" />
+                                                <TextBlock Grid.Row="4" Text="ClientSecret" VerticalAlignment="Center" Margin="0,4" /><PasswordBox x:Name="EosSecretBox" Grid.Row="4" Grid.Column="1" Margin="0,3" PasswordChanged="EosSecret_Changed" />
+                                                <TextBlock Grid.Row="5" Text="Display name" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="DisplayNameBox" Grid.Row="5" Grid.Column="1" Margin="0,3" Text="Player" />
+                                            </Grid>
+                                            <ToggleButton x:Name="EosNoPresenceCheck" Style="{StaticResource OptionToggle}" Margin="0,10,0,0"
+                                                          Content="Steam+EOS: non-presence lobbies (turn on if co-op lobbies are rejected)"
+                                                          Click="BackendCheck_Toggled" />
+                                            <TextBlock Text="Disables EOS presence &amp; the Steam&#x2194;EOS integrated platform so an anonymous login can host/join. Only for Steam+EOS games where co-op fails with a lobby-permission error."
+                                                       Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,5,0,0" />
+                                            <ToggleButton x:Name="EosVerboseCheck" Style="{StaticResource OptionToggle}" Margin="0,10,0,0"
+                                                          Content="Verbose EOS SDK logging" ToolTip="[EOS] VerboseLog — route the EOS SDK's full verbose log into the host log" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- Photon -->
+                                    <Border x:Name="PhotonCredsGroup" Background="{StaticResource PanelAltBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="13,12" Margin="0,0,0,10">
+                                        <StackPanel>
+                                            <Grid Margin="0,0,0,8">
+                                                <TextBlock Text="PHOTON" Foreground="{StaticResource MutedBrush}" FontSize="11" FontWeight="Bold" />
+                                                <Border x:Name="PhotonRequiredBadge" HorizontalAlignment="Right" Background="{StaticResource WarnBgBrush}" BorderBrush="{StaticResource WarnBrush}" BorderThickness="1" Padding="7,1" Visibility="Collapsed">
+                                                    <TextBlock Text="REQUIRED" Foreground="{StaticResource WarnBrush}" FontSize="10" FontWeight="Bold" />
+                                                </Border>
+                                            </Grid>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                                                <TextBlock Text="Realtime AppId" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="PhotonRealtimeBox" Grid.Column="1" Margin="0,3" TextChanged="BackendField_Changed" />
+                                                <TextBlock Grid.Row="1" Text="Fusion AppId" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="PhotonFusionBox" Grid.Row="1" Grid.Column="1" Margin="0,3" TextChanged="BackendField_Changed" />
+                                                <TextBlock Grid.Row="2" Text="Voice AppId" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="PhotonVoiceBox" Grid.Row="2" Grid.Column="1" Margin="0,3" TextChanged="BackendField_Changed" />
+                                                <TextBlock Grid.Row="3" Text="Nickname" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="PhotonNicknameBox" Grid.Row="3" Grid.Column="1" Margin="0,3" ToolTip="Optional display name (Photon Nickname)" />
+                                            </Grid>
+                                            <ToggleButton x:Name="PhotonVerboseCheck" Style="{StaticResource OptionToggle}" Margin="0,10,0,0"
+                                                          Content="Verbose Photon logging" ToolTip="[Realtime] VerboseLog — log every Photon response and status change. Failed logins and dropped connections are logged even without it." />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- PlayFab -->
+                                    <Border x:Name="PlayFabCredsGroup" Background="{StaticResource PanelAltBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="13,12" Margin="0,0,0,10">
+                                        <StackPanel>
+                                            <Grid Margin="0,0,0,8">
+                                                <TextBlock Text="PLAYFAB" Foreground="{StaticResource MutedBrush}" FontSize="11" FontWeight="Bold" />
+                                                <Border x:Name="PlayFabRequiredBadge" HorizontalAlignment="Right" Background="{StaticResource WarnBgBrush}" BorderBrush="{StaticResource WarnBrush}" BorderThickness="1" Padding="7,1" Visibility="Collapsed">
+                                                    <TextBlock Text="REQUIRED" Foreground="{StaticResource WarnBrush}" FontSize="10" FontWeight="Bold" />
+                                                </Border>
+                                            </Grid>
+                                            <ToggleButton x:Name="PlayFabKeepGameTitleCheck" Style="{StaticResource OptionToggle}" Margin="0,0,0,10"
+                                                          Content="Use the game's own PlayFab title &#x2014; anonymous login, no redirect (no TitleId needed)"
+                                                          Click="BackendCheck_Toggled" />
+                                            <Grid>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <TextBlock Text="TitleId" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="PlayFabTitleBox" Grid.Column="1" Margin="0,3" TextChanged="BackendField_Changed" />
+                                            </Grid>
+                                            <ToggleButton x:Name="PlayFabVerboseCheck" Style="{StaticResource OptionToggle}" Margin="0,10,0,0"
+                                                          Content="Verbose PlayFab logging" ToolTip="[PlayFab] VerboseLog — log every PlayFab request/rewrite/response" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- coherence -->
+                                    <Border Background="{StaticResource PanelAltBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="13,12" Margin="0,0,0,10">
+                                        <StackPanel>
+                                            <TextBlock Text="COHERENCE" Foreground="{StaticResource MutedBrush}" FontSize="11" FontWeight="Bold" Margin="0,0,0,8" />
+                                            <Grid>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                                                <TextBlock Text="Runtime key" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="CoherenceKeyBox" Grid.Column="1" Margin="0,3" />
+                                                <TextBlock Grid.Row="1" Text="Project ID" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="CoherenceProjectBox" Grid.Row="1" Grid.Column="1" Margin="0,3" ToolTip="Optional coherence ProjectId" />
+                                            </Grid>
+                                            <ToggleButton x:Name="CoherenceLocalServerCheck" Style="{StaticResource OptionToggle}" Margin="0,10,0,0"
+                                                          Content="Host local replication server (LAN)" ToolTip="[Coherence] LaunchReplicationServer — run a local replication server instead of Cloud rooms" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- DLC -->
+                                    <Border Background="{StaticResource PanelAltBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="13,12" Margin="0,0,0,10">
+                                        <StackPanel>
+                                            <TextBlock Text="DLC" Foreground="{StaticResource MutedBrush}" FontSize="11" FontWeight="Bold" Margin="0,0,0,8" />
+                                            <TextBlock Text="DLC found in the game folder is added automatically. Add any it missed here, one per line, as appId=name (the name is optional)."
+                                                       Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                            <TextBox x:Name="ManualDlcBox" Height="74" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"
+                                                     ToolTip="One per line, e.g. 12345=Deluxe Pack. Merged into [DLC]; a manual entry overrides a discovered one. The 'Unlock DLC' toggle above still controls UnlockAll." />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- General & runtime -->
+                                    <Border Background="{StaticResource PanelAltBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="13,12">
+                                        <StackPanel>
+                                            <TextBlock Text="GENERAL &amp; RUNTIME" Foreground="{StaticResource MutedBrush}" FontSize="11" FontWeight="Bold" Margin="0,0,0,10" />
+                                            <Grid>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions>
+                                                <TextBlock Text="Emulated AppId" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="AppIdBox" Grid.Column="1" Margin="0,3" Text="480" />
+                                                <TextBlock Grid.Row="1" Text="Legacy client version" VerticalAlignment="Center" Margin="0,4" /><TextBox x:Name="LegacyClientBox" Grid.Row="1" Grid.Column="1" Margin="0,3" />
+                                                <TextBlock Grid.Row="2" Text="Advanced ini" VerticalAlignment="Top" Margin="0,8,0,0" /><TextBox x:Name="AdditionalFlagsBox" Grid.Row="2" Grid.Column="1" Height="58" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Margin="0,3" ToolTip="Raw ini, one key=value per line. A bare key goes under [Settings]; add a [Section] line to target another section (e.g. [PlayFab], [EOS]). Overrides any generated value." />
+                                            </Grid>
+                                            <WrapPanel Margin="0,10,0,0">
+                                                <StackPanel Width="230" Margin="0,0,20,0">
+                                                    <ToggleButton x:Name="SteamStubCheck" Style="{StaticResource OptionToggle}" Content="SteamStub support" ToolTip="GetStubbedLol" />
+                                                    <ToggleButton x:Name="PassthroughTicketCheck" Style="{StaticResource OptionToggle}" Content="Passthrough ticket" />
+                                                    <ToggleButton x:Name="EmulateTicketCheck" Style="{StaticResource OptionToggle}" Content="Emulate ticket" />
+                                                    <ToggleButton x:Name="SdrCheck" Style="{StaticResource OptionToggle}" Content="Steam Datagram Relay" ToolTip="SDR" Margin="0" />
+                                                </StackPanel>
+                                                <StackPanel Width="230" Margin="0,0,20,0">
+                                                    <ToggleButton x:Name="LogOverlayCheck" Style="{StaticResource OptionToggle}" Content="Overlay logging" />
+                                                    <ToggleButton x:Name="WarnOverlayCheck" Style="{StaticResource OptionToggle}" Content="Overlay warning" />
+                                                    <ToggleButton x:Name="VerboseLogCheck" Style="{StaticResource OptionToggle}" Content="Verbose logging" />
+                                                    <ToggleButton x:Name="InventoryGrantCheck" Style="{StaticResource OptionToggle}" Content="Auto-grant purchases" ToolTip="InventoryAutoGrant — approve ISteamInventory StartPurchase locally and grant/persist the items" Margin="0" />
+                                                </StackPanel>
+                                                <StackPanel Width="230">
+                                                    <ToggleButton x:Name="LoadDllsEarlyCheck" Style="{StaticResource OptionToggle}" Content="Load DLLs early" ToolTip="[VersionProxy] LoadDLLsEarly — preload steam_api64 before the game so plugin hooks land in time. Defaults on when a plugin is deployed." />
+                                                    <ToggleButton x:Name="SdrSafeCheck" Style="{StaticResource OptionToggle}" Content="SDR-safe context" ToolTip="[VersionProxy] SdrSafe — keep the process Steam context on the real AppId so early overlay load doesn't poison SDR relay auth. Defaults on when SDR is on." />
+                                                    <ToggleButton x:Name="RequireSteamCheck" Style="{StaticResource OptionToggle}" IsChecked="True" Content="Require Steam running" ToolTip="[VersionProxy] RequireSteam — abort the launch with a prompt if Steam isn't running (default on)." />
+                                                    <ToggleButton x:Name="RealAppIdEnvCheck" Style="{StaticResource OptionToggle}" Content="Show game its real AppId" ToolTip="[Settings] RealAppIdEnv — some games read the SteamAppId env at startup and quit if it isn't their real AppId (Valheim logs &quot;Invalid APPID&quot; and exits). Shows the game ogAppId for that check while Steam still connects as the spoofed AppId." />
+                                                    <ToggleButton x:Name="LocalSavesCheck" Style="{StaticResource OptionToggle}" IsChecked="True" Content="Keep saves local" ToolTip="[Settings] LocalSaves — Steam Cloud is bound to the app the process runs as, so every UCO2 game otherwise shares the spoofed AppId's one cloud folder and games that pick the same save name overwrite each other. Reports cloud as off (a game with its own save path then uses it) and serves the Steam file API from the game's uco_cloud folder for games that have no other path. Existing saves are copied across on the first run." Margin="0" />
+                                                </StackPanel>
+                                            </WrapPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Expander>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ================= STATUS BAR ================= -->
+        <Border Grid.Row="2" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,1">
+            <Grid Margin="16,9">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
+                <Border Width="7" Height="7" Background="{StaticResource SuccessBrush}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <TextBlock x:Name="StatusText" Grid.Column="1" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" Text="Choose a game folder to begin" TextTrimming="CharacterEllipsis" />
+                <ProgressBar x:Name="Progress" Grid.Column="2" Height="4" VerticalAlignment="Center" Minimum="0" Maximum="1"
+                             Background="#222224" Foreground="{StaticResource AccentBrush}" BorderThickness="0" />
+            </Grid>
+        </Border>
+
+        <!-- ================= COLLAPSIBLE DETAILS DRAWER ================= -->
+        <Expander Grid.Row="3" x:Name="DetailsExpander" Header="Changes, backups &amp; activity" IsExpanded="True"
+                  Visibility="Collapsed" Margin="14,5,14,4">
+        <TabControl x:Name="MainTabs" Height="210" Background="{StaticResource WindowBrush}" BorderThickness="0" Padding="0" Margin="0,3,0,0">
+            <TabItem Header="Changes">
+                <ListView x:Name="OperationList" Margin="0,8,0,0" Background="{StaticResource FieldBrush}" BorderBrush="{StaticResource BorderBrush}">
+                    <ListView.View><GridView>
+                        <GridViewColumn Header="Action" Width="90" DisplayMemberBinding="{Binding Kind}" />
+                        <GridViewColumn Header="Change" Width="240" DisplayMemberBinding="{Binding Description}" />
+                        <GridViewColumn Header="Target" Width="470" DisplayMemberBinding="{Binding TargetPath}" />
+                    </GridView></ListView.View>
+                </ListView>
+            </TabItem>
+            <TabItem Header="Backups">
+                <Grid Margin="0,8,0,0">
+                    <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <DataGrid x:Name="BackupGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" Background="{StaticResource FieldBrush}" BorderBrush="{StaticResource BorderBrush}" GridLinesVisibility="Horizontal">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Created" Width="180" Binding="{Binding CreatedAt, StringFormat=g}" />
+                            <DataGridTextColumn Header="Status" Width="110" Binding="{Binding Status}" />
+                            <DataGridTextColumn Header="Files" Width="70" Binding="{Binding FileCount}" />
+                            <DataGridTextColumn Header="Snapshot" Width="*" Binding="{Binding Id}" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                        <Button Style="{StaticResource GhostButton}" Content="Open backup folder" Click="OpenBackupFolder_Click" />
+                        <Button Content="Restore selected" Click="Restore_Click" />
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Activity">
+                <TextBox x:Name="ActivityLog" Margin="0,8,0,0" IsReadOnly="True" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"
+                         TextWrapping="Wrap" FontFamily="Cascadia Mono, Consolas" FontSize="12" Background="{StaticResource FieldBrush}" />
+            </TabItem>
+        </TabControl>
+        </Expander>
+
+        <!-- ================= FOOTER ACTIONS ================= -->
+        <Border Grid.Row="4" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
+            <Grid Margin="12,9">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="PackageButton" Style="{StaticResource GhostButton}" Content="Package fix" Click="PackageFix_Click" IsEnabled="False" />
+                    <Button x:Name="UpdateFixButton" Style="{StaticResource GhostButton}" Content="Update fix" Click="UpdateFix_Click" IsEnabled="False" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Content="Review" MinWidth="88" Click="Preview_Click" />
+                    <Button x:Name="ApplyButton" Style="{StaticResource PrimaryButton}" Content="REVIEW &amp; APPLY" MinWidth="150" Click="Apply_Click" IsEnabled="False" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

@@ -113,6 +113,13 @@ S_API bool S_CALLTYPE SteamAPI_ManualDispatch_GetNextCallback(HSteamPipe hPipe, 
 				{
 					pDisp->m_bProcessing = true;
 
+					if (pDisp->TryGetSyntheticForManual(false, pMsg))
+					{
+						pDisp->m_ManualCbId = pMsg->m_iCallback;
+						pDisp->m_ManualCbSize = pMsg->m_cubParam;
+						return true;
+					}
+
 					if (pDisp->m_pfnBGetCallback(hPipe, pMsg))
 					{
 						pDisp->m_ManualCbId = pMsg->m_iCallback;
@@ -158,7 +165,8 @@ S_API void S_CALLTYPE SteamAPI_ManualDispatch_FreeLastCallback(HSteamPipe hPipe)
 		{
 			if (pDisp->m_bProcessing)
 			{
-				pDisp->m_pfnFreeLastCallback(hPipe);
+				if (!pDisp->FreeManualSynthetic())
+					pDisp->m_pfnFreeLastCallback(hPipe);
 				pDisp->m_ManualCbId = 0;
 				pDisp->m_ManualCbSize = 0;
 				pDisp->m_bProcessing = false;
@@ -181,6 +189,8 @@ S_API void S_CALLTYPE SteamAPI_ManualDispatch_FreeLastCallback(HSteamPipe hPipe)
 
 S_API bool S_CALLTYPE SteamAPI_ManualDispatch_GetAPICallResult(HSteamPipe hPipe, SteamAPICall_t hCall, void* pBuf, int cubBuf, int iExpected, bool* pbFailed)
 {
+	if (UcoInvEmu::IsOurCall(hCall))
+		return UcoInvEmu::GetAPICallResult(hCall, pBuf, cubBuf, iExpected, pbFailed);
 	if (g_DispatchMode == 3)
 		SteamAPI_ManualDispatch_Init();
 
@@ -230,7 +240,7 @@ S_API bool S_CALLTYPE SteamAPI_ManualDispatch_GetAPICallResult(HSteamPipe hPipe,
 
 S_API void S_CALLTYPE SteamAPI_RegisterCallResult(CCallbackBase* pCb, SteamAPICall_t hCall)
 {
-	UCOLOG("[UCOnline2] SteamAPI_RegisterCallResult\r\n");
+	UCOLOG_HOT("[UCOnline2] SteamAPI_RegisterCallResult\r\n");
 
 	if (g_DispatchMode == 1)
 	{
@@ -244,7 +254,7 @@ S_API void S_CALLTYPE SteamAPI_RegisterCallResult(CCallbackBase* pCb, SteamAPICa
 
 S_API void S_CALLTYPE SteamAPI_RegisterCallback(CCallbackBase* pCb, int32 iCb)
 {
-	UCOLOG("[UCOnline2] SteamAPI_RegisterCallback\r\n");
+	UCOLOG_HOT("[UCOnline2] SteamAPI_RegisterCallback\r\n");
 
 	if (g_DispatchMode == 1)
 	{
@@ -258,7 +268,7 @@ S_API void S_CALLTYPE SteamAPI_RegisterCallback(CCallbackBase* pCb, int32 iCb)
 
 S_API void S_CALLTYPE SteamAPI_UnregisterCallResult(CCallbackBase* pCb, SteamAPICall_t hCall)
 {
-	UCOLOG("[UCOnline2] SteamAPI_UnregisterCallResult\r\n");
+	UCOLOG_HOT("[UCOnline2] SteamAPI_UnregisterCallResult\r\n");
 
 	if (g_DispatchMode == 1)
 	{
@@ -274,7 +284,7 @@ S_API void S_CALLTYPE SteamAPI_UnregisterCallResult(CCallbackBase* pCb, SteamAPI
 
 S_API void S_CALLTYPE SteamAPI_UnregisterCallback(CCallbackBase* pCb)
 {
-	UCOLOG("[UCOnline2] SteamAPI_UnregisterCallback\r\n");
+	UCOLOG_HOT("[UCOnline2] SteamAPI_UnregisterCallback\r\n");
 
 	if (g_DispatchMode == 1)
 	{
@@ -290,7 +300,7 @@ S_API void S_CALLTYPE SteamAPI_UnregisterCallback(CCallbackBase* pCb)
 
 S_API void S_CALLTYPE SteamAPI_RunCallbacks()
 {
-	UCOLOG("[UCOnline2] SteamAPI_RunCallbacks\r\n");
+	UCOLOG_HOT("[UCOnline2] SteamAPI_RunCallbacks\r\n");
 
 	if (g_DispatchMode == 1)
 		return;
@@ -357,7 +367,7 @@ S_API void S_CALLTYPE Steam_RegisterInterfaceFuncs(void* hModule)
 
 S_API void S_CALLTYPE Steam_RunCallbacks(HSteamPipe hPipe, bool bServer)
 {
-	UCOLOG("[UCOnline2] Steam_RunCallbacks\r\n");
+	UCOLOG_HOT("[UCOnline2] Steam_RunCallbacks\r\n");
 
 	if (g_DispatchMode == 1)
 		return;

@@ -103,6 +103,11 @@ bool MONO_SetStaticFieldByName(MonoClass* klass,
 // For non-string objects, writes the type name + a short hex dump.
 bool MONO_DescribeObject(MonoObject* obj, char* out, size_t outSize);
 
+// If `obj` is a managed String, copy its plain UTF-8 text into `out`
+// (NUL-terminated, truncated). Returns false -- leaving `out` empty -- for
+// null or non-string objects. Unlike MONO_DescribeObject it adds no decoration.
+bool MONO_StringToUtf8(MonoObject* obj, char* out, size_t outSize);
+
 #ifdef __cplusplus
 }
 #endif

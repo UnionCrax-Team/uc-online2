@@ -1,11 +1,12 @@
 #include <winver.h>
 #include "include/resource.h"
+#include "include/version.h"
 
 IDI_ICON1 ICON "icon.ico"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,7,0,0
- PRODUCTVERSION 1,7,0,0
+ FILEVERSION VER_FILEVERSION
+ PRODUCTVERSION VER_FILEVERSION
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -22,7 +23,7 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "veeanti | union-crax.xyz"
             VALUE "FileDescription", "uc-online2, custom Steam Client API for UnionCrax"
-            VALUE "FileVersion", "1.7.0.0"
+            VALUE "FileVersion", VER_FILEVERSION_STR
             VALUE "InternalName", "uc-online2"
             VALUE "LegalCopyright", "union-crax.xyz | veeanti | xinerqu 2026"
             #ifdef IS_64BIT
@@ -31,7 +32,7 @@ BEGIN
             VALUE "OriginalFilename", "steam_api.dll"
             #endif
             VALUE "ProductName", "uc-online2"
-            VALUE "ProductVersion", "1.7.0.0"
+            VALUE "ProductVersion", VER_FILEVERSION_STR
             VALUE "Comments", "https://union-crax.xyz | https://vee-anti.xyz"
         END
     END
