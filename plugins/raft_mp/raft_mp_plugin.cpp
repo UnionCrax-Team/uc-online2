@@ -26,6 +26,18 @@
 //        OnSteamLoginSuccess/UserSignedIn run unchanged and we get a
 //        real EntityToken (which PlayFab Party then uses).
 //
+// COMPANION MODE
+//   Modules 2-4 are game-agnostic and now also live in
+//   playfab_universal. If that plugin is loaded alongside this
+//   one, this plugin stands down from them and keeps only
+//   module 1 (the Raft-specific bit), so the two never fight
+//   over the same hook. Loaded on its own, this plugin still
+//   does all four -- existing installs are unaffected.
+//
+//   The loader LoadLibrary's every plugin before calling any
+//   UCO_PluginInit, so GetModuleHandle is reliable here whatever
+//   order the DLLs sort in.
+//
 // Mono-only. MinHook statically linked.
 // ============================================================
 #include <Windows.h>
@@ -46,6 +58,7 @@ static HANDLE         g_hWatcherThread = nullptr;
 static ISteamUser*    g_pSteamUser     = nullptr;
 static char           g_TitleIdA[64]   = {};   // our PlayFab TitleId (ini)
 static wchar_t        g_TitleIdW[64]   = {};   // wide, for WinHTTP host rewrite
+static bool           g_bCompanion     = false; // playfab_universal is handling 2-4
 
 #define LOG(...) do { if (g_Log) g_Log(__VA_ARGS__); } while (0)
 
@@ -94,6 +107,7 @@ static volatile LONG g_TitleIdRedirected = 0;
 
 static void TryRedirectTitleId()
 {
+    if (g_bCompanion) return;
     if (!g_TitleIdA[0]) return;
     if (InterlockedCompareExchange(&g_TitleIdRedirected, 0, 0)) return;
     void* fn = MONO_FindMethodPtr("PlayFab", "PlayFab", "PlayFabSettings", "set_TitleId", 1);
@@ -242,8 +256,8 @@ static bool TryInstallAll()
         }
     }
 
-    // -- Login switch hook --
-    if (!InterlockedCompareExchange(&g_LoginHookDone, 0, 0)) {
+    // -- Login switch hook (skipped in companion mode) --
+    if (!g_bCompanion && !InterlockedCompareExchange(&g_LoginHookDone, 0, 0)) {
         MonoClass* crc = MONO_FindClass("PlayFab", "PlayFab.Internal", "CallRequestContainer");
         void* mac = MONO_FindMethodPtr("PlayFab", "PlayFab.Internal", "PlayFabUnityHttp", "MakeApiCall", 1);
         if (crc && mac) {
@@ -260,8 +274,9 @@ static bool TryInstallAll()
         }
     }
 
-    // -- Native Party endpoint redirect (WinHTTP) --
-    if (g_TitleIdW[0] && !InterlockedCompareExchange(&g_WinHttpHookDone, 0, 0)) {
+    // -- Native Party endpoint redirect (WinHTTP; skipped in companion mode) --
+    if (!g_bCompanion && g_TitleIdW[0] &&
+        !InterlockedCompareExchange(&g_WinHttpHookDone, 0, 0)) {
         HMODULE hWin = GetModuleHandleW(L"winhttp.dll");
         if (hWin) {
             void* pc = (void*)GetProcAddress(hWin, "WinHttpConnect");
@@ -275,8 +290,13 @@ static bool TryInstallAll()
         }
     }
 
-    return InterlockedCompareExchange(&g_UpdateHookDone, 0, 0) &&
-           InterlockedCompareExchange(&g_LoginHookDone, 0, 0) &&
+    if (!InterlockedCompareExchange(&g_UpdateHookDone, 0, 0))
+        return false;
+
+    // In companion mode the Update hook is the whole job.
+    if (g_bCompanion) return true;
+
+    return InterlockedCompareExchange(&g_LoginHookDone, 0, 0) &&
            (!g_TitleIdW[0] || InterlockedCompareExchange(&g_WinHttpHookDone, 0, 0));
 }
 
@@ -299,6 +319,10 @@ extern "C" __declspec(dllexport) int __cdecl UCO_PluginInit(const UCO_PluginCont
     g_Log        = ctx->Log;
     g_pSteamUser = ctx->pSteamUser;
 
+    // Every plugin DLL is loaded before any UCO_PluginInit runs, so this
+    // answer is final regardless of which of us initialises first.
+    g_bCompanion = (GetModuleHandleA("playfab_universal.dll") != nullptr);
+
     const char* ini = GetIniPath();
     if (ini) {
         GetPrivateProfileStringA("Playfab", "TitleId", "", g_TitleIdA, sizeof(g_TitleIdA), ini);
@@ -311,6 +335,11 @@ extern "C" __declspec(dllexport) int __cdecl UCO_PluginInit(const UCO_PluginCont
     LOG("[RaftUnlock] init: AppId=%u ogAppId=%u pSteamUser=%p PlayFabTitleId=%s",
         ctx->ForcedAppId, ctx->OriginalAppId, (void*)g_pSteamUser,
         g_TitleIdA[0] ? g_TitleIdA : "(none - redirect/login disabled)");
+
+    if (g_bCompanion)
+        LOG("[RaftUnlock] playfab_universal detected -- companion mode: "
+            "only the Raft_Network.Update gate is installed here, "
+            "PlayFab title/login/Party are left to playfab_universal");
 
     if (MH_Initialize() != MH_OK)
         LOG("[RaftUnlock] MH_Initialize non-OK (already inited?)");

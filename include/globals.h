@@ -11,12 +11,18 @@
 
 #include <Windows.h>
 #include <vector>
+#include <ctime>
+
+#include "include/dlc_store.h"
 
 #define STEAM_API_EXPORTS
 #include "include/sdk/steam_api.h"
 #include "include/sdk/steamclientpublic.h"
 #include "include/sdk/steam_gameserver.h"
 #include "include/sdk/isteamapplist.h"
+
+// forward-declare logging so it can be used in class methods declared below
+void UCOLOG(const char* fmt, ...);
 
 const uint32 k_unServerFlagNone    = 0x00;
 const uint32 k_unServerFlagSecure  = 0x01;
@@ -103,13 +109,35 @@ public:
     }
     virtual bool BIsBehindNAT() override { return false; }
     virtual void AdvertiseGame(CSteamID, uint32, uint16) override {}
-    virtual SteamAPICall_t RequestEncryptedAppTicket(void* pDataToInclude, int cbDataToInclude) override {
-        s_EncryptedTicket.clear();
-        s_EncryptedTicket.resize(128);
-        uint32 ticketSize = (uint32)GenerateFakeTicket(s_EncryptedTicket.data(), (uint32)s_EncryptedTicket.size(), pDataToInclude, cbDataToInclude);
-        s_EncryptedTicket.resize(ticketSize);
-        return k_uAPICallInvalid;
-    }
+	virtual SteamAPICall_t RequestEncryptedAppTicket(void* pDataToInclude, int cbDataToInclude) override {
+		s_EncryptedTicket.clear();
+		s_EncryptedTicket.resize(512); // start with a reasonable buffer
+		uint32 ticketSize = (uint32)GenerateFakeTicket(s_EncryptedTicket.data(), (uint32)s_EncryptedTicket.size(), pDataToInclude, cbDataToInclude);
+		if (ticketSize == 0) {
+			UCOLOG("[UCOnline2] RequestEncryptedAppTicket -> GenerateFakeTicket failed (cbDataToInclude=%d)", cbDataToInclude);
+			s_EncryptedTicket.clear();
+			return k_uAPICallInvalid;
+		}
+		if (ticketSize > s_EncryptedTicket.size()) {
+			UCOLOG("[UCOnline2] RequestEncryptedAppTicket -> GenerateFakeTicket returned size larger than buffer: %u > %zu", ticketSize, s_EncryptedTicket.size());
+			s_EncryptedTicket.clear();
+			return k_uAPICallInvalid;
+		}
+		s_EncryptedTicket.resize(ticketSize);
+		UCOLOG("[UCOnline2] RequestEncryptedAppTicket -> generated encrypted app ticket size=%u (cbDataToInclude=%d)", ticketSize, cbDataToInclude);
+		// Hex-dump first bytes for debugging
+		{
+			const uint32_t show = ticketSize > 128 ? 128u : ticketSize;
+			char hexbuf[1024]; int pos = 0;
+			for (uint32_t i = 0; i < show && pos < (int)sizeof(hexbuf) - 4; ++i) {
+				pos += _snprintf_s(hexbuf + pos, sizeof(hexbuf) - pos, _TRUNCATE, "%02X", s_EncryptedTicket[i]);
+				if (i + 1 < show) pos += _snprintf_s(hexbuf + pos, sizeof(hexbuf) - pos, _TRUNCATE, " ");
+			}
+			hexbuf[pos] = 0;
+			UCOLOG("[UCOnline2] EncryptedAppTicket[0..%u]: %s", show, hexbuf);
+		}
+		return k_uAPICallInvalid;
+	}
     virtual bool GetEncryptedAppTicket(void* pTicket, int cbMaxTicket, uint32* pcbTicket) override {
         if (!pcbTicket) return false;
         *pcbTicket = (uint32)s_EncryptedTicket.size();
@@ -320,33 +348,47 @@ public:
 
 extern CSteamAPIContext g_ClientCtx;
 
+// Installs auth-ticket hooks on whichever ISteamUser version the caller was
+// handed. Defined in dllmain.cpp; declared here so the interface factory can
+// call it as interfaces are created.
+void UcoInstallUserAuthHooks(void* pIface, const char* ver);
+void UcoInstallRemoteStorageHooks(void* pIface, const char* ver);
+
 class CSteamAppsStub : public ISteamApps
 {
 public:
-    static std::vector<uint32> s_UnlockedDLCAppIds;
-    static void SetUnlockedDLCAppIds(const std::vector<uint32>& appIds) { s_UnlockedDLCAppIds = appIds; }
+    // Ownership answers come from UcoDlcStore so the stub and the passthrough
+    // hooks in dllmain.cpp can never disagree. Kept as a shim for callers.
+    static void SetUnlockedDLCAppIds(const std::vector<uint32>& appIds)
+    {
+        for (uint32 id : appIds) UcoDlcStore::Add(id, nullptr);
+    }
     virtual bool BIsSubscribed() override { return true; }
     virtual bool BIsLowViolence() override { return true; }
     virtual bool BIsCybercafe() override { return false; }
     virtual bool BIsVACBanned() override { return false; }
     virtual const char *GetCurrentGameLanguage() override { return "english"; }
     virtual const char *GetAvailableGameLanguages() override { return "english"; }
+    // NOTE: these previously walked the id list and then returned true no matter
+    // what, so the configured list was dead code and EVERY id read as owned --
+    // including appId 0, which makes some games hang on the loading screen.
     virtual bool BIsSubscribedApp(AppId_t appID) override {
-        for (uint32 id : s_UnlockedDLCAppIds) {
-            if (id == (uint32)appID) return true;
-        }
-        return true;
+        return UcoDlcStore::IsOwned((uint32)appID);
     }
     virtual bool BIsDlcInstalled(AppId_t appID) override {
-        for (uint32 id : s_UnlockedDLCAppIds) {
-            if (id == (uint32)appID) return true;
-        }
-        return true;
+        return UcoDlcStore::IsInstalled((uint32)appID);
     }
-    virtual uint32 GetEarliestPurchaseUnixTime(AppId_t nAppID) override { return 0; }
+    // Games that check this treat 0 as "not owned", so owned DLC needs a real
+    // timestamp. Backdated, because a purchase time in the future is nonsense.
+    virtual uint32 GetEarliestPurchaseUnixTime(AppId_t nAppID) override {
+        if (!UcoDlcStore::IsOwned((uint32)nAppID)) return 0;
+        return (uint32)(time(nullptr) - 4 * 24 * 60 * 60);
+    }
     virtual bool BIsSubscribedFromFreeWeekend() override { return false; }
-    virtual int GetDLCCount() override { return 0; }
-    virtual bool BGetDLCDataByIndex(int iDLC, AppId_t *pAppID, bool *pbAvailable, char *pchName, int cchNameBufferSize) override { return false; }
+    virtual int GetDLCCount() override { return UcoDlcStore::Count(); }
+    virtual bool BGetDLCDataByIndex(int iDLC, AppId_t *pAppID, bool *pbAvailable, char *pchName, int cchNameBufferSize) override {
+        return UcoDlcStore::Get(iDLC, (uint32_t*)pAppID, pbAvailable, pchName, cchNameBufferSize);
+    }
     virtual void InstallDLC(AppId_t nAppID) override {}
     virtual void UninstallDLC(AppId_t nAppID) override {}
     virtual void RequestAppProofOfPurchaseKey(AppId_t nAppID) override {}
@@ -379,7 +421,6 @@ private:
     static CSteamAppsStub s_AppsStub;
 };
 
-std::vector<uint32> CSteamAppsStub::s_UnlockedDLCAppIds;
 bool CSteamUserStub::s_bEmulateTicket = false;
 uint32 CSteamUserStub::s_unEmulatedAppId = 0;
 std::vector<uint8_t> CSteamUserStub::s_EncryptedTicket;
@@ -388,29 +429,102 @@ CSteamUserStub s_UserStub;
 
 inline uint32 CSteamUserStub::GenerateFakeTicket(uint8_t* pTicket, uint32 cbMaxTicket, void* pDataToInclude, int cbDataToInclude)
 {
-    if (cbMaxTicket < 64) return 0;
-    
-    memset(pTicket, 0, cbMaxTicket);
-    
-    pTicket[0] = 'S';
-    pTicket[1] = 'T';
-    pTicket[2] = 'E';
-    pTicket[3] = 'A';
-    pTicket[4] = 'M';
-    
-    *reinterpret_cast<uint32_t*>(pTicket + 4) = s_unEmulatedAppId;
-    
-    *reinterpret_cast<uint32_t*>(pTicket + 8) = GetTickCount();
-    
-    uint32 dataOffset = 16;
-    if (pDataToInclude && cbDataToInclude > 0 && dataOffset + cbDataToInclude < cbMaxTicket) {
-        memcpy(pTicket + dataOffset, pDataToInclude, cbDataToInclude);
-        dataOffset += cbDataToInclude;
-    }
-    
-    *reinterpret_cast<uint32_t*>(pTicket + 12) = dataOffset;
-    
-    return dataOffset;
+	// Build a structurally-correct Steam auth/app ticket so games that parse
+	// the blob locally accept it. Signature is zeroed (we cannot forge it).
+	if (cbMaxTicket < 230) return 0; // minimum reasonable size
+
+	// local builder
+	struct Writer
+	{
+		uint8_t* p;
+		uint8_t* end;
+		bool ok;
+		Writer(void* buf, int cap) : p((uint8_t*)buf), end((uint8_t*)buf + cap), ok(true) {}
+		void u16(uint16_t v) { put(&v, sizeof(v)); }
+		void u32(uint32_t v) { put(&v, sizeof(v)); }
+		void u64(uint64_t v) { put(&v, sizeof(v)); }
+		void zero(size_t n)  { if (!room(n)) return; memset(p, 0, n); p += n; }
+		size_t written(void* base) const { return (size_t)(p - (uint8_t*)base); }
+	private:
+		bool room(size_t n) { if (p + n > end) { ok = false; return false; } return true; }
+		void put(const void* v, size_t n) { if (!room(n)) return; memcpy(p, v, n); p += n; }
+	} w(pTicket, cbMaxTicket);
+
+	const uint32_t GC_LEN      = 20;
+	const uint32_t SESSION_LEN = 24;
+	const uint32_t SIG_LEN     = 128;
+	const uint32_t TICKET_VER  = 4;
+
+	const uint32_t now = (uint32_t)time(nullptr);
+	const uint32_t startupSecs = (uint32_t)(GetTickCount64() / 1000ULL);
+	static volatile LONG s_localSeq = 0;
+	const uint32_t seq = (uint32_t)InterlockedIncrement(&s_localSeq);
+
+	uint64_t steamId = 0;
+	if (g_ClientCtx.SteamUser())
+		steamId = g_ClientCtx.SteamUser()->GetSteamID().ConvertToUint64();
+
+	// compute ticket blob size: base + one licence entry + DLC entries
+	const int dlcCount = UcoDlcStore::Count();
+	size_t ticketBlob = 42; // fixed fields
+	ticketBlob += 4; // one licence entry
+	for (int i = 0; i < dlcCount; ++i)
+		ticketBlob += 4 + 2 + 4; // DLC AppId + licence count + one licence
+
+	const size_t total = 24 + 28 + 4 + 4 + ticketBlob + SIG_LEN;
+	if (cbMaxTicket < (int)total) return 0;
+
+	memset(pTicket, 0, total);
+
+	// --- GC blob ---
+	w.u32(GC_LEN);
+	w.u64(((uint64_t)seq << 32) ^ (steamId + now));
+	w.u64(steamId);
+	w.u32(now);
+
+	// --- session blob ---
+	w.u32(SESSION_LEN);
+	w.u32(1);
+	w.u32(2);
+	w.u32(0); // ExternalIP
+	w.u32(0); // InternalIP
+	w.u32(startupSecs);
+	w.u32(seq);
+
+	// --- length prefixes ---
+	w.u32((uint32_t)(4 + ticketBlob + SIG_LEN));
+	w.u32((uint32_t)(ticketBlob + 4));
+
+	// --- ticket blob ---
+	w.u32(TICKET_VER);
+	w.u64(steamId); // steamid
+	w.u32(s_unEmulatedAppId);
+	w.u32(0); // ExternalIP
+	w.u32(0); // InternalIP
+	w.u32(0); // AlwaysZero / ownership flags
+	w.u32(now); // generated
+	w.u32(now + 24 * 60 * 60); // expires
+
+	w.u16(1); // licence count
+	w.u32(0); // licence id
+
+	w.u16((uint16_t)dlcCount);
+	for (int i = 0; i < dlcCount; ++i)
+	{
+		uint32_t dlcAppId = 0;
+		bool avail = false;
+		char name[8] = {};
+		UcoDlcStore::Get(i, &dlcAppId, &avail, name, 0);
+		w.u32(dlcAppId);
+		w.u16(1);
+		w.u32(0);
+	}
+
+	w.u16(0); // padding
+	w.zero(SIG_LEN);
+
+	if (!w.ok) return 0;
+	return (uint32)total;
 }
 
 class CSteamGameServerAPIContext
@@ -533,9 +647,24 @@ typedef void (S_CALLTYPE* Fn_BreakpadWriteDump)(uint32 Code, void* Info, uint32 
 extern Fn_BreakpadWriteDump g_pfnBreakpadWriteDump;
 
 extern uintp g_CtxCounter;
+extern ISteamClient* g_pSteamClientLegacy;
+extern char g_LegacyClientVersion[64];
+
+// The ISteamUser interface version the GAME resolved through the flat API
+// (e.g. 21 for "SteamUser021"). 0 = not seen yet. Recorded in UCO_FlatIfaceGuard.
+// GetAuthSessionTicket gained a networking-identity argument at version 022, so
+// the flat wrapper must know the caller's arity to avoid reading a garbage arg.
+extern int g_GameSteamUserVersion;
 
 void UCOLOG(const char* fmt, ...);
 void UCOColor(WORD color, const char* text);
+
+// Verbose (hot-path) logging switch -- [Settings] VerboseLog in union-crax.ini.
+// Off by default. Guards the per-frame / per-callback traces that would
+// otherwise emit tens of thousands of lines per session and bury anything
+// useful. Use UCOLOG_HOT for those; keep plain UCOLOG for one-shot events.
+extern bool g_bVerboseLog;
+#define UCOLOG_HOT(...) do { if (g_bVerboseLog) UCOLOG(__VA_ARGS__); } while (0)
 void* InitSteamClient(HMODULE* phModule, bool bLocal, const char* iface);
 void LoadBreakpadSymbols(HMODULE hMod);
 void UpdateMinidumpSteamID(uint64 sid);

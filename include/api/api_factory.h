@@ -21,13 +21,30 @@ S_API void* S_CALLTYPE SteamInternal_CreateInterface(const char* ver)
 			//
 			// Asked-for current version, or non-SteamClient interfaces,
 			// pass through to real Steam unchanged.
-			if (g_pSteamClient && _strnicmp(ver, "SteamClient", 11) == 0
+			// ...but only down to SteamClient018. The "additive vtable"
+			// assumption breaks for the older ones: a SteamClient017 caller
+			// walks a shorter layout, so its later getters land on the wrong
+			// slots. Rivals of Aether's Steamworks.gml extension does exactly
+			// that -- the early getters happen to line up, a later one returns
+			// null, and the extension gives up with "Steamworks.gml failed to
+			// link with Steam API", leaving the game unable to create a lobby.
+			// Old callers get the real interface for the version they asked
+			// for; the fallback below still covers a version Steam won't give.
+			const int reqVer = (_strnicmp(ver, "SteamClient", 11) == 0)
+			                 ? atoi(ver + 11) : 0;
+			if (g_pSteamClient && reqVer >= 18
 			    && strcmp(ver, STEAMCLIENT_INTERFACE_VERSION) != 0)
 			{
 				UCOLOG("[UCOnline2] CreateInterface: substituting cached %s "
 				       "for requested %s (vtable-compatible)\r\n",
 				       STEAMCLIENT_INTERFACE_VERSION, ver);
 				return g_pSteamClient;
+			}
+			if (reqVer > 0 && reqVer < 18)
+			{
+				UCOLOG("[UCOnline2] CreateInterface: %s predates the cached %s -- "
+				       "passing through to real Steam (substituting would misalign "
+				       "its vtable)\r\n", ver, STEAMCLIENT_INTERFACE_VERSION);
 			}
 
 			g_pfnCreateInterface = (Fn_CreateInterface)GetProcAddress(hMod, "CreateInterface");
@@ -80,7 +97,16 @@ S_API void* S_CALLTYPE SteamInternal_FindOrCreateUserInterface(HSteamUser hUser,
 		{
 			void* pIface = g_pSteamClient->GetISteamGenericInterface(hUser, g_ClientPipe, ver);
 			if (pIface)
+			{
+				// The game may take an older ISteamUser than the one we hold, and
+				// that is a different object with a different vtable -- so hook the
+				// instance actually being handed out, not just ours.
+				UcoInstallUserAuthHooks(pIface, ver);
+				// Same for ISteamRemoteStorage under [Settings] LocalSaves: the
+				// version the game takes is the one whose saves must go local.
+				UcoInstallRemoteStorageHooks(pIface, ver);
 				return pIface;
+			}
 
 			// Steamworks.NET 20.x CSteamAPIContext.Init() null-checks
 			// every interface and returns false if ANY is missing.

@@ -272,6 +272,16 @@ static void* UCO_FlatIfaceGuard(void* p, const char* name, const char* version)
 	// call before the log freezes names the interface that faults.
 	UCOLOG("[UCOnline2] FLAT %s version=%s -> %s\r\n",
 	       name, version ? version : "(none)", p ? "ok" : "NULL(stub)");
+	// Record the ISteamUser version the game asked for. GetAuthSessionTicket
+	// gained a 4th (networking-identity) argument at version 022; a game on 021
+	// or older calls the flat export with only three, so the wrapper must not
+	// read/forward the (garbage) identity for those callers.
+	if (version && name && strcmp(name, "GetISteamUser") == 0 &&
+	    strncmp(version, "SteamUser", 9) == 0)
+	{
+		int v = atoi(version + 9);
+		if (v > 0) g_GameSteamUserVersion = v;
+	}
 	if (p) return p;
 	static char s_FlatIfaceStub[4096] = {};
 	return (void*)s_FlatIfaceStub;
@@ -748,7 +758,15 @@ S_API HAuthTicket S_CALLTYPE SteamAPI_ISteamUser_GetAuthSessionTicket(intptr_t i
 {
 	if (g_bClientReady == false)
 		__debugbreak();
-	return g_ClientCtx.SteamUser()->GetAuthSessionTicket(pTicket, cbMaxTicket, pcbTicket, pSteamNetworkingIdentity);
+	// A game built against SteamUser021 or older calls the 3-argument form of
+	// this export -- it never pushes pSteamNetworkingIdentity, so what we read
+	// for it is a garbage stack slot. Forwarding that to real Steam faults
+	// (it dereferences the identity). Pass null for those callers; a null
+	// identity is the pre-022 behaviour anyway (ticket not bound to a peer).
+	const SteamNetworkingIdentity* ident =
+		(g_GameSteamUserVersion != 0 && g_GameSteamUserVersion < 22)
+			? nullptr : pSteamNetworkingIdentity;
+	return g_ClientCtx.SteamUser()->GetAuthSessionTicket(pTicket, cbMaxTicket, pcbTicket, ident);
 }
 S_API HAuthTicket S_CALLTYPE SteamAPI_ISteamUser_GetAuthTicketForWebApi(intptr_t instancePtr, const char* pchIdentity)
 {
@@ -796,12 +814,14 @@ S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamUser_RequestEncryptedAppTicket(in
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	UCOLOG("[UCOnline2] FLAT -> SteamAPI_ISteamUser_RequestEncryptedAppTicket cbDataToInclude=%d", cbDataToInclude);
 	return g_ClientCtx.SteamUser()->RequestEncryptedAppTicket(pDataToInclude, cbDataToInclude);
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamUser_GetEncryptedAppTicket(intptr_t instancePtr, void * pTicket, int cbMaxTicket, uint32 * pcbTicket)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	UCOLOG("[UCOnline2] FLAT -> SteamAPI_ISteamUser_GetEncryptedAppTicket cbMaxTicket=%d", cbMaxTicket);
 	return g_ClientCtx.SteamUser()->GetEncryptedAppTicket(pTicket, cbMaxTicket, pcbTicket);
 }
 S_API int S_CALLTYPE SteamAPI_ISteamUser_GetGameBadgeLevel(intptr_t instancePtr, int nSeries, bool bFoil)
@@ -1455,6 +1475,10 @@ S_API void S_CALLTYPE SteamAPI_ISteamUtils_SetOverlayNotificationPosition(intptr
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamUtils_IsAPICallCompleted(intptr_t instancePtr, SteamAPICall_t hSteamAPICall, bool * pbFailed)
 {
+	if (UcoInvEmu::IsOurCall(hSteamAPICall))
+		return UcoInvEmu::IsAPICallCompleted(hSteamAPICall, pbFailed);
+	if (UcoCloudEmu::IsOurCall(hSteamAPICall))
+		return UcoCloudEmu::IsAPICallCompleted(hSteamAPICall, pbFailed);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamGameServerUtils() || g_bClientReady == false)
@@ -1477,6 +1501,10 @@ S_API ESteamAPICallFailure S_CALLTYPE SteamAPI_ISteamUtils_GetAPICallFailureReas
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamUtils_GetAPICallResult(intptr_t instancePtr, SteamAPICall_t hSteamAPICall, void * pCallback, int cubCallback, int iCallbackExpected, bool * pbFailed)
 {
+	if (UcoInvEmu::IsOurCall(hSteamAPICall))
+		return UcoInvEmu::GetAPICallResult(hSteamAPICall, pCallback, cubCallback, iCallbackExpected, pbFailed);
+	if (UcoCloudEmu::IsOurCall(hSteamAPICall))
+		return UcoCloudEmu::GetAPICallResult(hSteamAPICall, pCallback, cubCallback, iCallbackExpected, pbFailed);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamGameServerUtils() || g_bClientReady == false)
@@ -2233,42 +2261,56 @@ S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileWrite(intptr_t instancePt
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::FileWrite(pchFile, pvData, cubData);
 	return g_ClientCtx.SteamRemoteStorage()->FileWrite(pchFile, pvData, cubData);
 }
 S_API int32 S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileRead(intptr_t instancePtr, const char * pchFile, void * pvData, int32 cubDataToRead)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::FileRead(pchFile, pvData, cubDataToRead);
 	return g_ClientCtx.SteamRemoteStorage()->FileRead(pchFile, pvData, cubDataToRead);
 }
 S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileWriteAsync(intptr_t instancePtr, const char * pchFile, const void * pvData, uint32 cubData)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::FileWriteAsync(pchFile, pvData, cubData);
 	return g_ClientCtx.SteamRemoteStorage()->FileWriteAsync(pchFile, pvData, cubData);
 }
 S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileReadAsync(intptr_t instancePtr, const char * pchFile, uint32 nOffset, uint32 cubToRead)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::FileReadAsync(pchFile, nOffset, cubToRead);
 	return g_ClientCtx.SteamRemoteStorage()->FileReadAsync(pchFile, nOffset, cubToRead);
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileReadAsyncComplete(intptr_t instancePtr, SteamAPICall_t hReadCall, void * pvBuffer, uint32 cubToRead)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::FileReadAsyncComplete(hReadCall, pvBuffer, cubToRead);
 	return g_ClientCtx.SteamRemoteStorage()->FileReadAsyncComplete(hReadCall, pvBuffer, cubToRead);
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileForget(intptr_t instancePtr, const char * pchFile)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::FileForget(pchFile);
 	return g_ClientCtx.SteamRemoteStorage()->FileForget(pchFile);
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileDelete(intptr_t instancePtr, const char * pchFile)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::FileDelete(pchFile);
 	return g_ClientCtx.SteamRemoteStorage()->FileDelete(pchFile);
 }
 S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileShare(intptr_t instancePtr, const char * pchFile)
@@ -2281,145 +2323,128 @@ S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_SetSyncPlatforms(intptr_t ins
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return true;
 	return g_ClientCtx.SteamRemoteStorage()->SetSyncPlatforms(pchFile, eRemoteStoragePlatform);
 }
 S_API UGCFileWriteStreamHandle_t S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileWriteStreamOpen(intptr_t instancePtr, const char * pchFile)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::FileWriteStreamOpen(pchFile);
 	return g_ClientCtx.SteamRemoteStorage()->FileWriteStreamOpen(pchFile);
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileWriteStreamWriteChunk(intptr_t instancePtr, UGCFileWriteStreamHandle_t writeHandle, const void * pvData, int32 cubData)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::FileWriteStreamWriteChunk(writeHandle, pvData, cubData);
 	return g_ClientCtx.SteamRemoteStorage()->FileWriteStreamWriteChunk(writeHandle, pvData, cubData);
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileWriteStreamClose(intptr_t instancePtr, UGCFileWriteStreamHandle_t writeHandle)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::FileWriteStreamClose(writeHandle);
 	return g_ClientCtx.SteamRemoteStorage()->FileWriteStreamClose(writeHandle);
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileWriteStreamCancel(intptr_t instancePtr, UGCFileWriteStreamHandle_t writeHandle)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::FileWriteStreamCancel(writeHandle);
 	return g_ClientCtx.SteamRemoteStorage()->FileWriteStreamCancel(writeHandle);
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FileExists(intptr_t instancePtr, const char * pchFile)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
-	bool result = g_ClientCtx.SteamRemoteStorage()->FileExists(pchFile);
-
-	// Fallback: if Steam says no, check local file in %APPDATA%/<game>/steam/<SteamID>/
-	if (!result && pchFile && pchFile[0])
-	{
-		static char s_localBase[MAX_PATH] = {0};
-		if (s_localBase[0] == '\0')
-		{
-			uint64 steamID = 0;
-			ISteamUser* pUser = g_ClientCtx.SteamUser();
-			if (pUser) steamID = pUser->GetSteamID().ConvertToUint64();
-			if (steamID != 0)
-			{
-				char sid[32] = {0};
-				_snprintf_s(sid, sizeof(sid), _TRUNCATE, "%llu", steamID);
-				const char* appData = getenv("APPDATA");
-				if (appData && appData[0])
-				{
-					WIN32_FIND_DATAA ffd = {0};
-					char sp[MAX_PATH] = {0};
-					_snprintf_s(sp, sizeof(sp), _TRUNCATE, "%s\\*", appData);
-					HANDLE hFind = FindFirstFileA(sp, &ffd);
-					if (hFind != INVALID_HANDLE_VALUE)
-					{
-						do {
-							if (!(ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-							if (strcmp(ffd.cFileName, ".") == 0 || strcmp(ffd.cFileName, "..") == 0) continue;
-							char cp[MAX_PATH] = {0};
-							_snprintf_s(cp, sizeof(cp), _TRUNCATE, "%s\\%s\\steam\\%s", appData, ffd.cFileName, sid);
-							if (GetFileAttributesA(cp) != INVALID_FILE_ATTRIBUTES)
-							{ strcpy_s(s_localBase, sizeof(s_localBase), cp); break; }
-						} while (FindNextFileA(hFind, &ffd));
-						FindClose(hFind);
-					}
-				}
-			}
-		}
-		if (s_localBase[0] != '\0')
-		{
-			char norm[MAX_PATH] = {0};
-			strcpy_s(norm, sizeof(norm), pchFile);
-			for (char* p = norm; *p; p++) if (*p == '/') *p = '\\';
-			if (norm[0] == '\\') memmove(norm, norm + 1, strlen(norm));
-			char fp[MAX_PATH * 2] = {0};
-			_snprintf_s(fp, sizeof(fp), _TRUNCATE, "%s\\%s", s_localBase, norm);
-			if (GetFileAttributesA(fp) != INVALID_FILE_ATTRIBUTES)
-				result = true;
-		}
-	}
-	return result;
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::FileExists(pchFile);
+	return g_ClientCtx.SteamRemoteStorage()->FileExists(pchFile);
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_FilePersisted(intptr_t instancePtr, const char * pchFile)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::FilePersisted(pchFile);
 	return g_ClientCtx.SteamRemoteStorage()->FilePersisted(pchFile);
 }
 S_API int32 S_CALLTYPE SteamAPI_ISteamRemoteStorage_GetFileSize(intptr_t instancePtr, const char * pchFile)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::GetFileSize(pchFile);
 	return g_ClientCtx.SteamRemoteStorage()->GetFileSize(pchFile);
 }
 S_API int64 S_CALLTYPE SteamAPI_ISteamRemoteStorage_GetFileTimestamp(intptr_t instancePtr, const char * pchFile)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::GetFileTimestamp(pchFile);
 	return g_ClientCtx.SteamRemoteStorage()->GetFileTimestamp(pchFile);
 }
 S_API ERemoteStoragePlatform S_CALLTYPE SteamAPI_ISteamRemoteStorage_GetSyncPlatforms(intptr_t instancePtr, const char * pchFile)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return k_ERemoteStoragePlatformAll;
 	return g_ClientCtx.SteamRemoteStorage()->GetSyncPlatforms(pchFile);
 }
 S_API int32 S_CALLTYPE SteamAPI_ISteamRemoteStorage_GetFileCount(intptr_t instancePtr)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::GetFileCount();
 	return g_ClientCtx.SteamRemoteStorage()->GetFileCount();
 }
 S_API const char* S_CALLTYPE SteamAPI_ISteamRemoteStorage_GetFileNameAndSize(intptr_t instancePtr, int iFile, int32 * pnFileSizeInBytes)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::GetFileNameAndSize(iFile, pnFileSizeInBytes);
 	return g_ClientCtx.SteamRemoteStorage()->GetFileNameAndSize(iFile, pnFileSizeInBytes);
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_GetQuota(intptr_t instancePtr, uint64 * pnTotalBytes, uint64 * puAvailableBytes)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::GetQuota(pnTotalBytes, puAvailableBytes);
 	return g_ClientCtx.SteamRemoteStorage()->GetQuota(pnTotalBytes, puAvailableBytes);
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_IsCloudEnabledForAccount(intptr_t instancePtr)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::IsCloudEnabled();
 	return g_ClientCtx.SteamRemoteStorage()->IsCloudEnabledForAccount();
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_IsCloudEnabledForApp(intptr_t instancePtr)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return UcoCloudEmu::IsCloudEnabled();
 	return g_ClientCtx.SteamRemoteStorage()->IsCloudEnabledForApp();
 }
 S_API void S_CALLTYPE SteamAPI_ISteamRemoteStorage_SetCloudEnabledForApp(intptr_t instancePtr, bool bEnabled)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return;
 	return g_ClientCtx.SteamRemoteStorage()->SetCloudEnabledForApp(bEnabled);
 }
 S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamRemoteStorage_UGCDownload(intptr_t instancePtr, UGCHandle_t hContent, uint32 unPriority)
@@ -2612,31 +2637,48 @@ S_API int32 S_CALLTYPE SteamAPI_ISteamRemoteStorage_GetLocalFileChangeCount(intp
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return 0;
 	return g_ClientCtx.SteamRemoteStorage()->GetLocalFileChangeCount();
 }
 S_API const char* S_CALLTYPE SteamAPI_ISteamRemoteStorage_GetLocalFileChange(intptr_t instancePtr, int iFile, ERemoteStorageLocalFileChange* pEChangeType, ERemoteStorageFilePathType* pEFilePathType)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return "";
 	return g_ClientCtx.SteamRemoteStorage()->GetLocalFileChange(iFile, pEChangeType, pEFilePathType);
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_BeginFileWriteBatch(intptr_t instancePtr)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return true;
 	return g_ClientCtx.SteamRemoteStorage()->BeginFileWriteBatch();
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamRemoteStorage_EndFileWriteBatch(intptr_t instancePtr)
 {
 	if (g_bClientReady == false)
 		__debugbreak();
+	if (UcoCloudEmu::Enabled())
+		return true;
 	return g_ClientCtx.SteamRemoteStorage()->EndFileWriteBatch();
 }
-S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamUserStats_RequestCurrentStats(intptr_t instancePtr)
+S_API bool S_CALLTYPE SteamAPI_ISteamUserStats_RequestCurrentStats(intptr_t instancePtr)
 {
-	// RequestCurrentStats was removed from SDK (managed by Steam client)
-	// Return invalid to let the caller handle gracefully
-	return k_uAPICallInvalid;
+	// Older Steamworks.NET builds gate startup on this bool. Newer Steam clients
+	// sync stats before launch, so there is no current vtable call to forward.
+	const uint32 appId = g_OriginalAppId ? g_OriginalAppId : g_ForcedAppId;
+	UserStatsReceived_t cb = {};
+	cb.m_nGameID = CGameID(appId).ToUint64();
+	cb.m_eResult = k_EResultOK;
+	if (g_bClientReady && g_ClientCtx.SteamUser())
+		cb.m_steamIDUser = g_ClientCtx.SteamUser()->GetSteamID();
+
+	GetDispatcher()->PostCallback(UserStatsReceived_t::k_iCallback, &cb, sizeof(cb), g_ClientUser, false, 10);
+	UCOLOG("[UCOnline2] SteamAPI_ISteamUserStats_RequestCurrentStats -> true; queued UserStatsReceived app=%u\r\n", appId);
+	return true;
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamUserStats_GetStatInt32(intptr_t instancePtr, const char * pchName, int32 * pData)
 {
@@ -7271,6 +7313,8 @@ S_API void S_CALLTYPE SteamAPI_ISteamHTMLSurface_FileLoadDialogResponse(intptr_t
 }
 S_API EResult S_CALLTYPE SteamAPI_ISteamInventory_GetResultStatus(intptr_t instancePtr, SteamInventoryResult_t resultHandle)
 {
+	if (UcoInvEmu::Enabled() && UcoInvEmu::IsOurResult(resultHandle))
+		return UcoInvEmu::GetResultStatus(resultHandle);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -7282,6 +7326,8 @@ S_API EResult S_CALLTYPE SteamAPI_ISteamInventory_GetResultStatus(intptr_t insta
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamInventory_GetResultItems(intptr_t instancePtr, SteamInventoryResult_t resultHandle, struct SteamItemDetails_t * pOutItemsArray, uint32 * punOutItemsArraySize)
 {
+	if (UcoInvEmu::Enabled() && UcoInvEmu::IsOurResult(resultHandle))
+		return UcoInvEmu::GetResultItems(resultHandle, pOutItemsArray, punOutItemsArraySize);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -7293,6 +7339,8 @@ S_API bool S_CALLTYPE SteamAPI_ISteamInventory_GetResultItems(intptr_t instanceP
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamInventory_GetResultItemProperty(intptr_t instancePtr, SteamInventoryResult_t resultHandle, uint32 unItemIndex, const char * pchPropertyName, char * pchValueBuffer, uint32 * punValueBufferSizeOut)
 {
+	if (UcoInvEmu::Enabled() && UcoInvEmu::IsOurResult(resultHandle))
+		return UcoInvEmu::GetResultItemProperty(resultHandle, unItemIndex, pchPropertyName, pchValueBuffer, punValueBufferSizeOut);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -7304,6 +7352,8 @@ S_API bool S_CALLTYPE SteamAPI_ISteamInventory_GetResultItemProperty(intptr_t in
 }
 S_API uint32 S_CALLTYPE SteamAPI_ISteamInventory_GetResultTimestamp(intptr_t instancePtr, SteamInventoryResult_t resultHandle)
 {
+	if (UcoInvEmu::Enabled() && UcoInvEmu::IsOurResult(resultHandle))
+		return UcoInvEmu::GetResultTimestamp(resultHandle);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -7315,6 +7365,8 @@ S_API uint32 S_CALLTYPE SteamAPI_ISteamInventory_GetResultTimestamp(intptr_t ins
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamInventory_CheckResultSteamID(intptr_t instancePtr, SteamInventoryResult_t resultHandle, class CSteamID steamIDExpected)
 {
+	if (UcoInvEmu::Enabled() && UcoInvEmu::IsOurResult(resultHandle))
+		return UcoInvEmu::CheckResultSteamID(resultHandle, steamIDExpected);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -7326,6 +7378,8 @@ S_API bool S_CALLTYPE SteamAPI_ISteamInventory_CheckResultSteamID(intptr_t insta
 }
 S_API void S_CALLTYPE SteamAPI_ISteamInventory_DestroyResult(intptr_t instancePtr, SteamInventoryResult_t resultHandle)
 {
+	if (UcoInvEmu::Enabled() && UcoInvEmu::IsOurResult(resultHandle))
+		{ UcoInvEmu::DestroyResult(resultHandle); return; }
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -7337,6 +7391,8 @@ S_API void S_CALLTYPE SteamAPI_ISteamInventory_DestroyResult(intptr_t instancePt
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamInventory_GetAllItems(intptr_t instancePtr, SteamInventoryResult_t * pResultHandle)
 {
+	if (UcoInvEmu::Enabled())
+		return UcoInvEmu::GetAllItems(pResultHandle);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -7381,6 +7437,8 @@ S_API bool S_CALLTYPE SteamAPI_ISteamInventory_DeserializeResult(intptr_t instan
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamInventory_GenerateItems(intptr_t instancePtr, SteamInventoryResult_t * pResultHandle, const SteamItemDef_t * pArrayItemDefs, const uint32 * punArrayQuantity, uint32 unArrayLength)
 {
+	if (UcoInvEmu::Enabled())
+		return UcoInvEmu::GrantItems(pArrayItemDefs, punArrayQuantity, unArrayLength, pResultHandle);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -7392,6 +7450,8 @@ S_API bool S_CALLTYPE SteamAPI_ISteamInventory_GenerateItems(intptr_t instancePt
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamInventory_GrantPromoItems(intptr_t instancePtr, SteamInventoryResult_t * pResultHandle)
 {
+	if (UcoInvEmu::Enabled())
+		return UcoInvEmu::GrantItems(nullptr, nullptr, 0, pResultHandle);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -7403,6 +7463,8 @@ S_API bool S_CALLTYPE SteamAPI_ISteamInventory_GrantPromoItems(intptr_t instance
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamInventory_AddPromoItem(intptr_t instancePtr, SteamInventoryResult_t * pResultHandle, SteamItemDef_t itemDef)
 {
+	if (UcoInvEmu::Enabled())
+		return UcoInvEmu::AddPromoItem(itemDef, pResultHandle);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -7414,6 +7476,8 @@ S_API bool S_CALLTYPE SteamAPI_ISteamInventory_AddPromoItem(intptr_t instancePtr
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamInventory_AddPromoItems(intptr_t instancePtr, SteamInventoryResult_t * pResultHandle, const SteamItemDef_t * pArrayItemDefs, uint32 unArrayLength)
 {
+	if (UcoInvEmu::Enabled())
+		return UcoInvEmu::GrantItems(pArrayItemDefs, nullptr, unArrayLength, pResultHandle);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -7425,6 +7489,8 @@ S_API bool S_CALLTYPE SteamAPI_ISteamInventory_AddPromoItems(intptr_t instancePt
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamInventory_ConsumeItem(intptr_t instancePtr, SteamInventoryResult_t * pResultHandle, SteamItemInstanceID_t itemConsume, uint32 unQuantity)
 {
+	if (UcoInvEmu::Enabled())
+		return UcoInvEmu::ConsumeItem(itemConsume, unQuantity, pResultHandle);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -7469,6 +7535,8 @@ S_API void S_CALLTYPE SteamAPI_ISteamInventory_SendItemDropHeartbeat(intptr_t in
 }
 S_API bool S_CALLTYPE SteamAPI_ISteamInventory_TriggerItemDrop(intptr_t instancePtr, SteamInventoryResult_t * pResultHandle, SteamItemDef_t dropListDefinition)
 {
+	if (UcoInvEmu::Enabled())
+		return UcoInvEmu::GrantItems(&dropListDefinition, nullptr, 1, pResultHandle);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -7546,6 +7614,8 @@ S_API bool S_CALLTYPE SteamAPI_ISteamInventory_GetEligiblePromoItemDefinitionIDs
 }
 S_API SteamAPICall_t S_CALLTYPE SteamAPI_ISteamInventory_StartPurchase(intptr_t instancePtr, const SteamItemDef_t * pArrayItemDefs, const uint32 * punArrayQuantity, uint32 unArrayLength)
 {
+	if (UcoInvEmu::Enabled())
+		return UcoInvEmu::StartPurchase(pArrayItemDefs, punArrayQuantity, unArrayLength);
 	if (g_bServerReady == true)
 	{
 		if (instancePtr == (intptr_t)g_ServerCtx.SteamInventory() || g_bClientReady == false)
@@ -8703,6 +8773,51 @@ S_API ISteamClient* S_CALLTYPE SteamAPI_SteamClient_v019()
 {
 	UCOLOG("[UCOnline2] SteamAPI_SteamClient_v019\r\n");
 	return g_bClientReady ? g_ClientCtx.SteamClient() : nullptr;
+}
+
+// Facepunch.Steamworks resolves a versioned accessor per interface and throws
+// EntryPointNotFoundException from SteamClient.Init if one is absent -- which
+// surfaces as a HANG, not an error: Init throws, the client is never
+// constructed, and the game's preloader waits forever for an account that will
+// never exist. Vampire Survivors died exactly this way on SteamAPI_SteamUGC_v017.
+//
+// Returning our cached SteamClient023 for a v020 request is the same
+// substitution CreateInterface already makes: ISteamClient has only ever had
+// methods appended, so the older vtable is a prefix of the newer one.
+S_API ISteamClient* S_CALLTYPE SteamAPI_SteamClient_v020()
+{
+	UCOLOG("[UCOnline2] SteamAPI_SteamClient_v020\r\n");
+	return g_bClientReady ? g_ClientCtx.SteamClient() : nullptr;
+}
+
+// ISteamUGC is NOT append-only across versions, so handing back our pinned
+// v021 object would give the caller a vtable whose indices do not line up.
+// Ask real Steam for the v017 interface instead and pass that through -- then
+// the layout is whatever the caller was compiled against.
+S_API ISteamUGC* S_CALLTYPE SteamAPI_SteamUGC_v017()
+{
+	UCOLOG("[UCOnline2] SteamAPI_SteamUGC_v017\r\n");
+	if (!g_bClientReady)
+		return nullptr;
+	return (ISteamUGC*)SteamInternal_FindOrCreateUserInterface(
+		g_ClientUser, "STEAMUGC_INTERFACE_VERSION017");
+}
+
+// The GAME SERVER half of the same interface, and it is a separate export.
+//
+// Adding only the client accessor above got Vampire Survivors booting and into
+// a lobby, and then it failed on this one the moment it activated P2P and
+// spun up its game-server context. A game that pins an interface version pins
+// it on BOTH sides -- so when adding a versioned accessor, always add the
+// SteamGameServer* twin at the same time rather than waiting for the second
+// half of the failure to show up.
+S_API ISteamUGC* S_CALLTYPE SteamAPI_SteamGameServerUGC_v017()
+{
+	UCOLOG("[UCOnline2] SteamAPI_SteamGameServerUGC_v017\r\n");
+	if (!g_bServerReady)
+		return nullptr;
+	return (ISteamUGC*)SteamInternal_FindOrCreateGameServerInterface(
+		g_ServerUser, "STEAMUGC_INTERFACE_VERSION017");
 }
 
 // ============================================================

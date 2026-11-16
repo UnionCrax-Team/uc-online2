@@ -86,6 +86,28 @@ void* IL2CPP_FindMethodPtr(const char* imageName,
 // fails.
 void* IL2CPP_StringNew(const char* utf8);
 
+// Allocate an object of an already-resolved managed class. The caller must
+// invoke an appropriate constructor before exposing it to managed code.
+Il2CppObject* IL2CPP_ObjectNew(Il2CppClass* klass);
+
+// Invoke a void instance method with one managed object argument. The method
+// is resolved from the target object's runtime class, so closed generic types
+// (such as TaskCompletionSource<string>) use their correct MethodInfo.
+bool IL2CPP_InvokeVoidOne(Il2CppObject* target, const char* methodName,
+                          Il2CppObject* argument);
+
+// Invoke a one-argument instance method and return its managed result. This
+// keeps the method metadata intact for IL2CPP methods that return Task objects.
+Il2CppObject* IL2CPP_InvokeObjectOne(Il2CppObject* target,
+                                     const char* methodName,
+                                     Il2CppObject* argument);
+
+// Invoke a zero-argument static method through the managed runtime.
+Il2CppObject* IL2CPP_InvokeStaticZero(const char* imageName,
+                                      const char* namespaceName,
+                                      const char* className,
+                                      const char* methodName);
+
 // Walk every method on `klass` and log its name + parameter
 // count via IL2CPP_Log, prefixed with `[il2cpp][dump <name>]`.
 // Useful for diagnosing "I know the class but not the method"
@@ -109,6 +131,16 @@ Il2CppObject* IL2CPP_DictByteGetItem(Il2CppObject* dict, uint8_t key);
 // (NUL-terminated, truncated to outSize). For other objects, writes
 // the type name + a short hex dump. Returns true on success.
 bool IL2CPP_DescribeObject(Il2CppObject* obj, char* out, size_t outSize);
+
+// Byte offset of instance field `fieldName` from the start of an object of
+// class `klass` (object header included). -1 if the runtime lacks the export
+// or the field doesn't exist.
+int IL2CPP_GetFieldOffset(Il2CppClass* klass, const char* fieldName);
+
+// If `obj` is a String, copy its plain UTF-8 text into `out` (NUL-terminated,
+// truncated). Returns false -- leaving `out` empty -- for null or non-string
+// objects. Unlike IL2CPP_DescribeObject it adds no decoration.
+bool IL2CPP_StringToUtf8(Il2CppObject* obj, char* out, size_t outSize);
 
 #ifdef __cplusplus
 }

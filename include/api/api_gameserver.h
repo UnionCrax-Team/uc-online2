@@ -139,7 +139,7 @@ S_API HSteamPipe S_CALLTYPE SteamGameServer_GetHSteamPipe()
 
 S_API HSteamUser S_CALLTYPE SteamGameServer_GetHSteamUser()
 {
-	UCOLOG("[UCOnline2] SteamGameServer_GetHSteamUser\r\n");
+	UCOLOG_HOT("[UCOnline2] SteamGameServer_GetHSteamUser\r\n");
 	return g_ServerUser;
 }
 
@@ -164,7 +164,7 @@ S_API uint64 S_CALLTYPE SteamGameServer_GetSteamID()
 
 S_API void S_CALLTYPE SteamGameServer_RunCallbacks()
 {
-	UCOLOG("[UCOnline2] SteamGameServer_RunCallbacks\r\n");
+	UCOLOG_HOT("[UCOnline2] SteamGameServer_RunCallbacks\r\n");
 
 	if (g_DispatchMode == 1) return;
 	g_DispatchMode = 2;

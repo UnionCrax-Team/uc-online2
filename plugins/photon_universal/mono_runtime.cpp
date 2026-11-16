@@ -51,6 +51,8 @@ static Fn_mono_value_box                  g_value_box                  = nullptr
 static Fn_mono_runtime_invoke             g_runtime_invoke             = nullptr;
 static Fn_mono_get_byte_class             g_get_byte_class             = nullptr;
 static Fn_mono_string_to_utf8             g_string_to_utf8             = nullptr;
+typedef uint32_t (*Fn_mono_gchandle_new)(MonoObject*, int32_t /*pinned*/);
+static Fn_mono_gchandle_new               g_gchandle_new               = nullptr;
 static Fn_mono_free                       g_free                       = nullptr;
 static Fn_mono_class_get_name             g_class_get_name             = nullptr;
 static Fn_mono_class_get_field_from_name  g_class_get_field_from_name  = nullptr;
@@ -99,6 +101,7 @@ bool MONO_TryInit(void)
     g_class_vtable              = (Fn_mono_class_vtable)             GetProcAddress(g_hMono, "mono_class_vtable");
     g_field_static_set_value    = (Fn_mono_field_static_set_value)   GetProcAddress(g_hMono, "mono_field_static_set_value");
     g_field_get_offset          = (Fn_mono_field_get_offset)         GetProcAddress(g_hMono, "mono_field_get_offset");
+    g_gchandle_new              = (Fn_mono_gchandle_new)             GetProcAddress(g_hMono, "mono_gchandle_new");
 
     // Attach the caller's thread so subsequent managed calls
     // don't crash on Mono's thread-local-state assertions.
@@ -168,9 +171,13 @@ MonoClass* MONO_FindClass(const char* imageName,
 
     if (imageName)
     {
-        NamedClassState st = { namespaceName, className, imageName, nullptr };
-        g_assembly_foreach(&NamedClassCallback, &st);
-        return st.result;  // may be null (caller asked for specific image)
+        NamedClassState named = { namespaceName, className, imageName, nullptr };
+        g_assembly_foreach(&NamedClassCallback, &named);
+        if (named.result) return named.result;
+        // A named-image miss is NOT fatal: assembly/image names vary between PUN
+        // builds -- PhotonRealtime.dll reports its image as "PhotonRealtime"
+        // (no dot) while callers ask for "Photon.Realtime". The namespace+class
+        // pair is unique enough, so fall through to the full scan below.
     }
 
     FindClassState st = { namespaceName, className, nullptr, nullptr };
@@ -275,7 +282,16 @@ MonoString* MONO_StringNew(const char* utf8)
     if (!g_bReady || !g_string_new || !utf8) return nullptr;
     MonoDomain* dom = g_get_root_domain();
     if (!dom) return nullptr;
-    return g_string_new(dom, utf8);
+    MonoString* s = g_string_new(dom, utf8);
+    // Callers cache these strings in native globals for the process lifetime and
+    // re-insert them into managed collections (Photon's per-op params dict). A
+    // plugin DLL's globals aren't a GC root, so once the string leaves the dict
+    // Boehm reclaims it and the next insert hands the GC a dangling pointer --
+    // it faults in mono_validate_string_pointer on the next liveness pass. Pin
+    // it with a strong GC handle (never freed = intentional, tiny leak) so the
+    // cached pointer stays valid forever.
+    if (s && g_gchandle_new) g_gchandle_new((MonoObject*)s, 0);
+    return s;
 }
 
 bool MONO_DictByteByteSetItem(MonoObject* dict, uint8_t key, uint8_t value)
@@ -384,6 +400,22 @@ MonoObject* MONO_DictByteGetItem(MonoObject* dict, uint8_t key)
     MonoObject* result = g_runtime_invoke(getItem, dict, args, &exc);
     if (exc) return nullptr;
     return result;
+}
+
+bool MONO_StringToUtf8(MonoObject* obj, char* out, size_t outSize)
+{
+    if (!out || outSize == 0) return false;
+    out[0] = 0;
+    if (!obj || !g_string_to_utf8 || !g_object_get_class || !g_class_get_name) return false;
+    // Type-check first: a wrong field offset must read as "no string", not crash.
+    MonoClass* k = g_object_get_class(obj);
+    const char* clsName = k ? g_class_get_name(k) : nullptr;
+    if (!clsName || strcmp(clsName, "String") != 0) return false;
+    char* utf8 = g_string_to_utf8((MonoString*)obj);
+    if (!utf8) return false;
+    _snprintf_s(out, outSize, _TRUNCATE, "%s", utf8);
+    if (g_free) g_free(utf8);
+    return true;
 }
 
 bool MONO_DescribeObject(MonoObject* obj, char* out, size_t outSize)

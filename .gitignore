@@ -8,11 +8,23 @@ build/
 # Per-plugin / per-tool build outputs
 plugins/*/relbuild/
 plugins/*/debbuild/
+plugins_unreleased/*/relbuild/
+plugins_unreleased/*/debbuild/
 tools/*/relbuild/
 tools/*/debbuild/
+tools/UCO2.Patcher/**/bin/
+tools/UCO2.Patcher/**/obj/
+tools/UCO2.Patcher/publish/
 
 # Per-user IDE state
 *.vcxproj.user
 
 # Claude Code project state (auto-memory, settings)
 .claude/
+
+# Local scrapped work (reversible archive, never released)
+.backup/
+
+# Standalone C++ check build output (tests/build_cloudemu_test.bat)
+tests/*.exe
+tests/*.obj

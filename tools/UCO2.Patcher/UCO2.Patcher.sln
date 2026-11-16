@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UCO2.Patcher.Core", "UCO2.Patcher.Core\UCO2.Patcher.Core.csproj", "{37A35296-E586-4BEA-9E50-E69719253A77}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UCO2.Patcher.Gui", "UCO2.Patcher.Gui\UCO2.Patcher.Gui.csproj", "{80F7EE42-7B4F-41B6-B7BE-B34CA1D066BC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UCO2.Patcher.Tests", "UCO2.Patcher.Tests\UCO2.Patcher.Tests.csproj", "{16632A25-099F-4B72-8893-1AE7386A749A}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{37A35296-E586-4BEA-9E50-E69719253A77}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{37A35296-E586-4BEA-9E50-E69719253A77}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{37A35296-E586-4BEA-9E50-E69719253A77}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{37A35296-E586-4BEA-9E50-E69719253A77}.Release|Any CPU.Build.0 = Release|Any CPU
+		{80F7EE42-7B4F-41B6-B7BE-B34CA1D066BC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{80F7EE42-7B4F-41B6-B7BE-B34CA1D066BC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{80F7EE42-7B4F-41B6-B7BE-B34CA1D066BC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{80F7EE42-7B4F-41B6-B7BE-B34CA1D066BC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{16632A25-099F-4B72-8893-1AE7386A749A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{16632A25-099F-4B72-8893-1AE7386A749A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{16632A25-099F-4B72-8893-1AE7386A749A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{16632A25-099F-4B72-8893-1AE7386A749A}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>UCO2.Patcher</AssemblyName>
+    <RootNamespace>UCO2.Patcher.Gui</RootNamespace>
+    <ApplicationIcon>..\..\..\icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Version is baked into the exe: the release workflow passes
+         -p:InformationalVersion=<tag>; local/dev builds fall back to
+         "development". No loose version.txt ships beside the exe. -->
+    <InformationalVersion Condition="'$(InformationalVersion)' == ''">development</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\UCO2.Patcher.Core\UCO2.Patcher.Core.csproj" />
+  </ItemGroup>
+</Project>

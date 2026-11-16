@@ -37,23 +37,105 @@ static void WarnMissingInterface(HSteamPipe hPipe, const char* iface)
 
 extern uint32 g_ForcedAppId;
 extern uint32 g_OriginalAppId;
+extern uint32 g_SteamNetworkingAppId;
 static bool s_bAnonUser = false;
 
-static void SetAppIDEnv()
+// Read a REG_SZ from HKCU\Software\Valve\Steam.
+static bool ReadSteamRegString(const char* name, char* out, DWORD cch)
+{
+	if (!out || cch == 0) return false;
+	out[0] = '\0';
+	HKEY hKey = nullptr;
+	if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Valve\\Steam", 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+		return false;
+	DWORD type = 0, cb = cch;
+	const LONG r = RegQueryValueExA(hKey, name, nullptr, &type, (LPBYTE)out, &cb);
+	RegCloseKey(hKey);
+	if (r != ERROR_SUCCESS || type != REG_SZ) { out[0] = '\0'; return false; }
+	out[(cb < cch) ? cb : cch - 1] = '\0';
+	return out[0] != '\0';
+}
+
+// The Steam overlay is not something we render -- it is Valve's own
+// GameOverlayRenderer(64).dll, and it configures itself entirely from the
+// environment the Steam client normally sets up before launching a game. Set
+// only SteamAppId/SteamGameId/SteamOverlayGameId and it loads, hooks nothing
+// useful, and Shift+Tab does nothing: it has no idea which Steam user it
+// belongs to, where Steam lives, or that it was "launched by Steam" at all.
+//
+// So mirror the full set Steam itself exports. All of it must be in place
+// BEFORE GameOverlayRenderer is loaded (see LoadGameOverlay, called straight
+// after this in DllMain) -- the overlay reads them once, on attach.
+// True when the process was started BY Steam (a real Steam launch, or a
+// Non-Steam Game shortcut). Detected before we set anything, because the
+// detection IS the environment we are about to overwrite.
+//
+// This matters more than any other overlay signal: Steam only arms the overlay
+// for a process it launched and is tracking as the running game. Loading
+// GameOverlayRenderer ourselves puts the renderer in the process, but Steam
+// never starts gameoverlayui and never authorises the session, so Shift+Tab has
+// nothing to open. No amount of environment faking changes that -- the decision
+// is made on Steam's side.
+bool g_bLaunchedBySteam = false;
+
+static void SetSteamAppEnvironment(uint32 appId)
 {
 	char szApp[16] = { 0 };
 	char szGame[32] = { 0 };
-	char szOverlayGame[32] = { 0 };
-
-	_snprintf_s(szApp, sizeof(szApp), _TRUNCATE, "%u", g_ForcedAppId);
-	_snprintf_s(szGame, sizeof(szGame), _TRUNCATE, "%llu", CGameID(g_ForcedAppId).ToUint64());
-
-	uint32 overlayAppId = (g_OriginalAppId != 0) ? g_OriginalAppId : g_ForcedAppId;
-	_snprintf_s(szOverlayGame, sizeof(szOverlayGame), _TRUNCATE, "%llu", CGameID(overlayAppId).ToUint64());
-
+	_snprintf_s(szApp, sizeof(szApp), _TRUNCATE, "%u", appId);
+	_snprintf_s(szGame, sizeof(szGame), _TRUNCATE, "%llu", CGameID(appId).ToUint64());
 	SetEnvironmentVariableA("SteamAppId", szApp);
 	SetEnvironmentVariableA("SteamGameId", szGame);
+}
+
+static void SetAppIDEnv()
+{
+	{
+		char probe[64] = { 0 };
+		const DWORD had = GetEnvironmentVariableA("SteamGameId", probe, sizeof(probe));
+		g_bLaunchedBySteam = (had > 0 && had < sizeof(probe));
+	}
+
+	char szOverlayGame[32] = { 0 };
+
+	const uint32 steamContextAppId = g_SteamNetworkingAppId
+		? g_SteamNetworkingAppId : g_ForcedAppId;
+	SetSteamAppEnvironment(steamContextAppId);
+
+	// Deliberately the FORCED id, not ogAppId: the overlay talks to the real
+	// Steam client, which only knows about a game the user actually owns. Point
+	// it at the real AppId and Steam has no matching licence or running-game
+	// record, and the overlay stays inert.
+	uint32 overlayAppId = g_ForcedAppId;
+	_snprintf_s(szOverlayGame, sizeof(szOverlayGame), _TRUNCATE, "%llu", CGameID(overlayAppId).ToUint64());
+
 	SetEnvironmentVariableA("SteamOverlayGameId", szOverlayGame);
+
+	// Tells the overlay this process was started by Steam. Without it the
+	// overlay treats itself as injected into a foreign process and does not
+	// arm its input hook -- which is precisely the "Shift+Tab does nothing"
+	// symptom.
+	SetEnvironmentVariableA("SteamClientLaunch", "1");
+	SetEnvironmentVariableA("SteamTenfoot", "0");
+
+	char steamPath[MAX_PATH] = { 0 };
+	if (ReadSteamRegString("SteamPath", steamPath, sizeof(steamPath)))
+	{
+		// The registry stores it with forward slashes; the overlay builds paths
+		// from this and wants the Windows form.
+		for (char* c = steamPath; *c; ++c) if (*c == '/') *c = '\\';
+		SetEnvironmentVariableA("SteamPath", steamPath);
+	}
+
+	// The overlay resolves the logged-in account to render the friends list and
+	// the invite UI. With no user it has nothing to show, which is why invites
+	// come up blank rather than not at all.
+	char steamUser[128] = { 0 };
+	if (ReadSteamRegString("AutoLoginUser", steamUser, sizeof(steamUser)))
+	{
+		SetEnvironmentVariableA("SteamAppUser", steamUser);
+		SetEnvironmentVariableA("SteamUser", steamUser);
+	}
 }
 
 static void WriteAppIDFile()
@@ -94,7 +176,7 @@ S_API HSteamPipe S_CALLTYPE GetHSteamPipe()
 
 S_API HSteamUser S_CALLTYPE GetHSteamUser()
 {
-	UCOLOG("[UCOnline2] GetHSteamUser\r\n");
+	UCOLOG_HOT("[UCOnline2] GetHSteamUser\r\n");
 	return g_ClientUser;
 }
 
@@ -106,7 +188,7 @@ S_API HSteamPipe S_CALLTYPE SteamAPI_GetHSteamPipe()
 
 S_API HSteamUser S_CALLTYPE SteamAPI_GetHSteamUser()
 {
-	UCOLOG("[UCOnline2] SteamAPI_GetHSteamUser\r\n");
+	UCOLOG_HOT("[UCOnline2] SteamAPI_GetHSteamUser\r\n");
 	return g_ClientUser;
 }
 
@@ -187,6 +269,8 @@ S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* psz
 	SetAppIDEnv();
 	WriteAppIDFile();
 	UCOLOG("[UCOnline2] AppID forced to %u", g_ForcedAppId);
+	const bool splitSteamContext =
+		g_SteamNetworkingAppId != 0 && g_SteamNetworkingAppId != g_ForcedAppId;
 
 	if (g_pSteamClient)
 	{
@@ -194,7 +278,15 @@ S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* psz
 		return k_ESteamAPIInitResult_OK;
 	}
 
-	g_pSteamClient = static_cast<ISteamClient*>(InitSteamClient(&g_ClientModule, s_bAnonUser, STEAMCLIENT_INTERFACE_VERSION));
+	// OFME initializes its real Valve connection through SteamClient017, then
+	// presents a newer wrapper to the game.  Valve's versioned SteamClient
+	// objects are adjacent views of the same client aggregate, so create the
+	// pipe/user with v017 and switch to v023 before resolving modern interfaces.
+	const char* connectionClientVersion = splitSteamContext
+		? "SteamClient017" : STEAMCLIENT_INTERFACE_VERSION;
+	ISteamClient* connectionClient = static_cast<ISteamClient*>(
+		InitSteamClient(&g_ClientModule, s_bAnonUser, connectionClientVersion));
+	g_pSteamClient = connectionClient;
 
 	if (!g_pSteamClient)
 	{
@@ -204,10 +296,17 @@ S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* psz
 	}
 
 	SetAppIDEnv();
+	if (splitSteamContext)
+	{
+		SetSteamAppEnvironment(g_ForcedAppId);
+		UCOLOG("[UCOnline2] SDR connection client: loaded %s as AppId %u; "
+			"connecting user as %u", connectionClientVersion,
+			g_SteamNetworkingAppId, g_ForcedAppId);
+	}
 
 	if (!s_bAnonUser)
 	{
-		g_ClientPipe = g_pSteamClient->CreateSteamPipe();
+		g_ClientPipe = connectionClient->CreateSteamPipe();
 		if (g_ClientPipe == 0)
 		{
 			UCOColor(FOREGROUND_RED | FOREGROUND_INTENSITY, "[UCOnline2] CreateSteamPipe failed\r\n");
@@ -215,13 +314,31 @@ S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* psz
 			return k_ESteamAPIInitResult_NoSteamClient;
 		}
 
-		g_ClientUser = g_pSteamClient->ConnectToGlobalUser(g_ClientPipe);
+		g_ClientUser = connectionClient->ConnectToGlobalUser(g_ClientPipe);
+
 		UCOLOG("[UCOnline2] ConnectToGlobalUser -> %u\r\n", (uint32)g_ClientUser);
 	}
 	else
 	{
-		g_ClientUser = g_pSteamClient->CreateLocalUser(&g_ClientPipe, k_EAccountTypeAnonUser);
+		g_ClientUser = connectionClient->CreateLocalUser(&g_ClientPipe, k_EAccountTypeAnonUser);
 		UCOLOG("[UCOnline2] CreateLocalUser -> %u\r\n", (uint32)g_ClientUser);
+	}
+
+	if (splitSteamContext)
+	{
+		SetSteamAppEnvironment(g_SteamNetworkingAppId);
+
+		if (!g_pSteamClientSafe)
+		{
+			UCOColor(FOREGROUND_RED | FOREGROUND_INTENSITY,
+				"[UCOnline2] SteamClient023 unavailable after SDR connection\r\n");
+			SteamAPI_Shutdown();
+			return k_ESteamAPIInitResult_VersionMismatch;
+		}
+
+		g_pSteamClient = g_pSteamClientSafe;
+		UCOLOG("[UCOnline2] SDR client bridge: connected through SteamClient017, "
+			"continuing through %s", STEAMCLIENT_INTERFACE_VERSION);
 	}
 
 	if (g_ClientUser != 0)
@@ -248,12 +365,42 @@ S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* psz
 		ISteamUtils* pUtils = (ISteamUtils*)g_pSteamClient->GetISteamUtils(g_ClientPipe, STEAMUTILS_INTERFACE_VERSION);
 		if (pUtils)
 		{
+			// Networking interfaces cache the application context during
+			// CSteamAPIContext::Init, so expose ogAppId before that happens.
+			InstallEarlyAppIdHook(pUtils);
 			uint32 reportedID = pUtils->GetAppID();
 
 			if (reportedID == 0)
 				UCOColor(FOREGROUND_RED | FOREGROUND_INTENSITY, "[UCOnline2] Steam reported AppID 0, forcing 480\r\n");
 
 			SetAppIDEnv();
+			{
+				#if defined(_M_IX86)
+					const bool bModule = GetModuleHandleW(L"GameOverlayRenderer.dll") != nullptr;
+				#else
+					const bool bModule = GetModuleHandleW(L"GameOverlayRenderer64.dll") != nullptr;
+				#endif
+				// NOT a verdict: IsOverlayEnabled is documented to return false
+				// while the overlay is still attaching, and we are microseconds
+				// into startup here. Treating this as "disabled" produced a
+				// confidently wrong diagnosis. The launch check below is the
+				// signal that actually determines the outcome.
+				UCOLOG("[UCOnline2] Overlay: renderer module %s, launched-by-Steam=%d "
+					"(IsOverlayEnabled=%d, may still be attaching)",
+					bModule ? "loaded" : "NOT loaded", g_bLaunchedBySteam ? 1 : 0,
+					pUtils->IsOverlayEnabled() ? 1 : 0);
+
+				if (!g_bLaunchedBySteam && s_PluginLoader.GetWarnOverlayDisabled())
+				{
+					UCOColor(FOREGROUND_RED | FOREGROUND_INTENSITY,
+						"[UCOnline2] The Steam overlay will NOT work: this process was not "
+						"launched by Steam.\r\n"
+						"[UCOnline2]   Steam only arms the overlay for a game it started "
+						"itself. Add the game to Steam (Games > Add a Non-Steam Game), then "
+						"launch it from your library -- the emulator works exactly the same "
+						"either way.\r\n");
+				}
+			}
 			SteamAPI_SetBreakpadAppID(g_ForcedAppId);
 			Steam_RegisterInterfaceFuncs(g_ClientModule);
 			LoadBreakpadSymbols(g_ClientModule);
@@ -322,7 +469,6 @@ S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* psz
 				}
 
 				InstallSteamSpoofHooks();
-
 				// Build the plugin context now that Steam interfaces
 				// are resolved, then let each plugin install its
 				// game-specific hooks.
@@ -342,6 +488,13 @@ S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* psz
 				ctx.Log              = &UCOLOG;
 				ctx.RegisterCallbackPatcher = &UCO_RegisterCallbackPatcher;
 				s_PluginLoader.InitPlugins(&ctx);
+
+				if (splitSteamContext)
+				{
+					SetSteamAppEnvironment(g_ForcedAppId);
+					UCOLOG("[UCOnline2] SDR initialization complete; restored process AppId %u",
+						g_ForcedAppId);
+				}
 
 				return k_ESteamAPIInitResult_OK;
 			}
@@ -409,7 +562,7 @@ S_API bool S_CALLTYPE SteamAPI_InitSafe()
 
 S_API bool S_CALLTYPE SteamAPI_IsSteamRunning()
 {
-	UCOLOG("[UCOnline2] SteamAPI_IsSteamRunning");
+	UCOLOG_HOT("[UCOnline2] SteamAPI_IsSteamRunning");
 
 	DWORD ActiveProcessPID = 0;
 	LSTATUS GetPID = GetRegistryDWORD("Software\\Valve\\Steam\\ActiveProcess", "pid", ActiveProcessPID);

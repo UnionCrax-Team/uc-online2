@@ -50,13 +50,70 @@ public:
 			m_IniPath[0] = '\0';
 	}
 
+	// Path to union-crax.ini, or "" when it wasn't found next to the exe.
+	const char* GetIniPath() const { return m_IniPath; }
+
+
+	// ------------------------------------------------------------
+	// INI value reading.
+	//
+	// GetPrivateProfileString does NOT strip inline comments -- Windows only
+	// treats ';' at the START of a line as a comment. So
+	//     EmulateTicket=true  # Enable ticket emulation
+	// reads back as the whole string "true  # Enable ticket emulation", and an
+	// exact compare against "true" fails. That silently disabled EmulateTicket
+	// for anyone who copied the commented example out of the README -- the
+	// feature reported nothing, it simply never armed.
+	//
+	// A comment is only recognised when the '#' or ';' is preceded by
+	// whitespace, so a value that legitimately contains one (a path, a key)
+	// survives intact.
+	// ------------------------------------------------------------
+	static void IniCleanValue(char* v)
+	{
+		if (!v) return;
+		for (char* c = v; *c; ++c)
+		{
+			if ((*c == '#' || *c == ';') && c > v && (c[-1] == ' ' || c[-1] == '\t'))
+			{
+				*c = '\0';
+				break;
+			}
+		}
+		size_t n = strlen(v);
+		while (n && (v[n - 1] == ' ' || v[n - 1] == '\t' || v[n - 1] == '\r' || v[n - 1] == '\n'))
+			v[--n] = '\0';
+		char* q = v;
+		while (*q == ' ' || *q == '\t') ++q;
+		if (q != v) memmove(v, q, strlen(q) + 1);
+	}
+
+	// Reads a value with comments and surrounding whitespace removed. The buffer
+	// is sized for the RAW line, not the value, so a long trailing comment can
+	// never truncate the value itself.
+	void IniReadString(const char* key, const char* def, char* out, size_t cch) const
+	{
+		char raw[512] = { 0 };
+		GetPrivateProfileStringA("Settings", key, def, raw, sizeof(raw), m_IniPath);
+		IniCleanValue(raw);
+		strncpy_s(out, cch, raw, _TRUNCATE);
+	}
+
+	bool IniReadBool(const char* key, bool def) const
+	{
+		char v[64] = { 0 };
+		IniReadString(key, def ? "true" : "false", v, sizeof(v));
+		return (_stricmp(v, "true") == 0 || _stricmp(v, "1") == 0 ||
+		        _stricmp(v, "yes") == 0  || _stricmp(v, "on") == 0);
+	}
+
  	uint32 GetAppId()
  	{
  		if (m_IniPath[0] == '\0')
  			return 480;
 
- 		char buf[16] = { 0 };
- 		GetPrivateProfileStringA("Settings", "AppId", "480", buf, sizeof(buf), m_IniPath);
+ 		char buf[64] = { 0 };
+ 		IniReadString("AppId", "480", buf, sizeof(buf));
 
  		if (buf[0] == '\0')
  			return 480;
@@ -70,8 +127,8 @@ uint32 GetOgAppId()
   		if (m_IniPath[0] == '\0')
   	        return 0;
 
-  		char buf[16] = { 0 };
-  		GetPrivateProfileStringA("Settings", "ogAppId", "", buf, sizeof(buf), m_IniPath);
+  		char buf[64] = { 0 };
+  		IniReadString("ogAppId", "", buf, sizeof(buf));
 
   		if (buf[0] == '\0')
   			return 0;
@@ -80,6 +137,28 @@ uint32 GetOgAppId()
   		return id;
   	}
 
+	bool GetSDREnabled()
+	{
+		if (m_IniPath[0] == '\0')
+			return false;
+
+		return IniReadBool("SDR", false);
+	}
+
+	// [Settings] RealAppIdEnv=true -- expose ogAppId in the SteamAppId/SteamGameId
+	// environment variables for games that read that env at startup and refuse to
+	// run if it isn't their real AppId (e.g. Valheim's SteamManager: "Invalid APPID"
+	// -> Application.Quit(), checked BEFORE it calls SteamAPI_Init). The Steam
+	// connection itself still uses the forced (spoof) AppId, so ownership rides the
+	// free app. Needs ogAppId set.
+	bool GetRealAppIdEnv()
+	{
+		if (m_IniPath[0] == '\0')
+			return false;
+
+		return IniReadBool("RealAppIdEnv", false);
+	}
+
 	std::vector<uint32> GetUnlockDLCAppIds()
 	{
 		std::vector<uint32> appIds;
@@ -87,7 +166,7 @@ uint32 GetOgAppId()
 			return appIds;
 
 		char buf[1024] = { 0 };
-		GetPrivateProfileStringA("Settings", "UnlockDLC", "", buf, sizeof(buf), m_IniPath);
+		IniReadString("UnlockDLC", "", buf, sizeof(buf));
 
 		if (buf[0] == '\0')
 			return appIds;
@@ -113,10 +192,19 @@ uint32 GetOgAppId()
 		if (m_IniPath[0] == '\0')
 			return false;
 
-		char buf[8] = { 0 };
-		GetPrivateProfileStringA("Settings", "EmulateTicket", "false", buf, sizeof(buf), m_IniPath);
+		return IniReadBool("EmulateTicket", false);
+	}
 
-		return (_stricmp(buf, "true") == 0 || _stricmp(buf, "1") == 0 || _stricmp(buf, "yes") == 0);
+	// Explicitly keep Steam's genuine ticket path. This is useful for games that
+	// only need a real ticket to advance to a downstream auth layer which a
+	// plugin handles separately. It intentionally overrides EmulateTicket when
+	// both keys are present, making old/generated configs safe to amend.
+	bool GetPassthroughTicketEnabled()
+	{
+		if (m_IniPath[0] == '\0')
+			return false;
+
+		return IniReadBool("PassthroughTicket", false);
 	}
 
 	bool GetSteamStubEnabled()
@@ -124,10 +212,97 @@ uint32 GetOgAppId()
 		if (m_IniPath[0] == '\0')
 			return false;
 
-		char buf[8] = { 0 };
-		GetPrivateProfileStringA("Settings", "GetStubbedLol", "false", buf, sizeof(buf), m_IniPath);
+		return IniReadBool("GetStubbedLol", false);
+	}
 
-		return (_stricmp(buf, "true") == 0 || _stricmp(buf, "1") == 0 || _stricmp(buf, "yes") == 0);
+	// [Settings] InventoryAutoGrant=1 -- emulate ISteamInventory locally so
+	// in-game purchases/grants succeed and persist (real Steam has no items for
+	// the spoofed AppId). Off by default; prices/definitions still pass through.
+	bool GetInventoryAutoGrant()
+	{
+		if (m_IniPath[0] == '\0')
+			return false;
+
+		return IniReadBool("InventoryAutoGrant", false);
+	}
+
+	// [Settings] LocalSaves=true (DEFAULT ON) -- keep Steam Cloud saves out of the
+	// spoofed AppId's shared bucket. Real Steam binds ISteamRemoteStorage to the
+	// RUNNING app, so every UCO2 game otherwise writes into 480/remote together and
+	// games that pick a common name ("SaveData") overwrite each other -- and that
+	// bucket really does sync, so another machine pulls the wrong game's save down.
+	// Reports cloud as disabled (so a game with its own save path uses it) and
+	// serves the file API from <game>\uco_cloud for games that have no other path.
+	bool GetLocalSaves()
+	{
+		if (m_IniPath[0] == '\0')
+			return true;
+
+		return IniReadBool("LocalSaves", true);
+	}
+
+	// [Settings] VerboseLog=true re-enables the very chatty per-frame /
+	// per-callback log lines (RunCallbacks, ContextInit, GetHSteamPipe,
+	// callback dispatch traces). Off by default: those fire every frame and
+	// bury the useful lines under tens of thousands of entries.
+	bool GetVerboseLog()
+	{
+		if (m_IniPath[0] == '\0')
+			return false;
+
+		return IniReadBool("VerboseLog", false);
+	}
+
+	bool GetWarnOverlayDisabled()
+	{
+		if (m_IniPath[0] == '\0')
+			return false;
+
+		return IniReadBool("WarnOverlayDisabled", false);
+	}
+
+	// [Settings] Client pins what the exported SteamClient() accessor hands
+	// back, written as just the version number:  Client=017
+	//
+	// A game built against an old SDK calls that accessor and then indexes the
+	// returned vtable using the offsets from ITS headers. Hand such a caller a
+	// modern SteamClient023 and every getter lands on the wrong slot: Rivals of
+	// Aether asked for GetISteamUGC, got something else, stored the result
+	// without checking, and died dereferencing it later.
+	//
+	// Empty (the default) keeps the modern interface, which is right for
+	// everything else. "017" and "SteamClient017" are both accepted.
+	void GetClientVersion(char* out, size_t cch) const
+	{
+		if (cch) out[0] = '\0';
+		if (m_IniPath[0] == '\0') return;
+
+		char raw[64] = { 0 };
+		IniReadString("Client", "", raw, sizeof(raw));
+		if (raw[0] == '\0') return;
+
+		// Bare digits are the documented form; expand them to the real name.
+		bool digitsOnly = true;
+		for (const char* c = raw; *c; ++c)
+			if (*c < '0' || *c > '9') { digitsOnly = false; break; }
+
+		if (digitsOnly)
+			_snprintf_s(out, cch, _TRUNCATE, "SteamClient%s", raw);
+		else
+			strncpy_s(out, cch, raw, _TRUNCATE);
+	}
+
+	// [Settings] LoadOverlay=no stops UCOnline2 pulling Steam's
+	// GameOverlayRenderer into the process. Normally that load is what gives a
+	// directly-launched game its overlay, but the renderer hooks D3D/DXGI, and a
+	// game that dislikes being hooked that early has no other way to opt out.
+	// Default on, because for most titles it is the whole point.
+	bool GetLoadOverlay()
+	{
+		if (m_IniPath[0] == '\0')
+			return true;
+
+		return IniReadBool("LoadOverlay", true);
 	}
 
 	// This does not need to be set!! It will automatically run as true!!
@@ -136,9 +311,7 @@ uint32 GetOgAppId()
     	if (m_IniPath[0] == '\0')
         	return true;
     
-    	char buf[8] = { 0 };
-    		GetPrivateProfileStringA("Settings", "ForceOwnership", "true", buf, sizeof(buf), m_IniPath);
-    	return (_stricmp(buf, "true") == 0);
+    	return IniReadBool("ForceOwnership", true);
 	}
 
 	void LoadPlugins()
@@ -151,7 +324,7 @@ uint32 GetOgAppId()
 		PathRemoveFileSpecA(exeDir);
 
 		char folderName[MAX_PATH] = { 0 };
-		GetPrivateProfileStringA("Settings", "PluginsFolder", "", folderName, MAX_PATH, m_IniPath);
+		IniReadString("PluginsFolder", "", folderName, MAX_PATH);
 
 		if (folderName[0] == '\0')
 			return;

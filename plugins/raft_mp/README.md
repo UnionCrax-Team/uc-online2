@@ -8,6 +8,25 @@ This plugin makes it work by pointing Raft at **your own PlayFab title** and fix
 
 > If you don't need the latest version, **just use Raft 1.09 — it needs no plugin at all.** This plugin is only for people who want current-build multiplayer.
 
+## Relationship to `playfab_universal`
+
+Three of this plugin's four modules (PlayFab title redirect, login switch, native Party endpoint redirect) are game-agnostic and also ship in [`playfab_universal`](../playfab_universal/). Only module 1 — the `Raft_Network.Update` offline-gate hook — is Raft-specific.
+
+**You can safely load both.** On startup this plugin checks for `playfab_universal.dll` and, if present, enters **companion mode**: it installs *only* the Raft `Update` hook and leaves PlayFab title/login/Party entirely to `playfab_universal`. The two never contend for the same hook.
+
+| You have | This plugin does |
+|---|---|
+| `raft_mp.dll` alone | all four modules — **unchanged from previous versions** |
+| `raft_mp.dll` + `playfab_universal.dll` | module 1 only (companion mode) |
+
+Confirm in the log:
+
+```
+[RaftUnlock] playfab_universal detected -- companion mode: only the Raft_Network.Update gate is installed here, …
+```
+
+Either arrangement works and both use the same `[Playfab] TitleId`. If you're only playing Raft, this plugin on its own is still the simplest setup — nothing about it has changed.
+
 ## Confirmed working
 
 | Game | Steam AppId | Notes |
