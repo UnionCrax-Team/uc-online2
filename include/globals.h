@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include <Windows.h>
+#include "platform.h"
 #include <vector>
 #include <ctime>
 
@@ -676,5 +676,19 @@ void UCO_RegisterCallbackPatcher(int iCallback, UCO_CallbackPatcherFn fn);
 
 // Defined in dllmain.cpp; api_client.h calls InitPlugins() on it
 // after SteamAPI_Init succeeds.
+//
+// It is an accessor rather than a global object on purpose: the Linux ELF
+// constructor runs before the C++ static initialisers of the translation
+// unit, so a file-scope CDLLLoader would not be constructed yet at the point
+// where the ini has to be read. A function-local static is built on first
+// use, which is always in the right order.
 class CDLLLoader;
-extern CDLLLoader s_PluginLoader;
+CDLLLoader& UcoLoader();
+
+// Start-up work that needs the global C++ objects to be alive: loading the
+// plugins, the DLC store, the local cloud and the local inventory.
+//
+// On Windows this runs from DllMain (the CRT has already run the static
+// initialisers by then). On Linux it has to wait for SteamAPI_Init, because
+// the ELF constructor runs too early for it.
+void UcoOnLibraryReady();

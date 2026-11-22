@@ -1,4 +1,5 @@
-static bool s_bDispatcherInited = false;
+// Declared extern in api_callbacks.h; defined here.
+bool s_bDispatcherInited = false;
 CCallbackDispatcher* GetDispatcher();
 
 bool GetSteamPathFromRegistry(char* outPath, size_t pathSize);
@@ -119,6 +120,7 @@ static void SetAppIDEnv()
 	SetEnvironmentVariableA("SteamTenfoot", "0");
 
 	char steamPath[MAX_PATH] = { 0 };
+#if defined(_WIN32)
 	if (ReadSteamRegString("SteamPath", steamPath, sizeof(steamPath)))
 	{
 		// The registry stores it with forward slashes; the overlay builds paths
@@ -126,6 +128,19 @@ static void SetAppIDEnv()
 		for (char* c = steamPath; *c; ++c) if (*c == '/') *c = '\\';
 		SetEnvironmentVariableA("SteamPath", steamPath);
 	}
+#else
+	// No registry on Linux. The Steam root is the parent of whichever
+	// directory steamclient.so was found in.
+	{
+		const char* install = SteamAPI_GetSteamInstallPath();
+		if (_stricmp(install, "UCOnline2_InvalidPath") != 0)
+		{
+			strncpy_s(steamPath, sizeof(steamPath), install, _TRUNCATE);
+			PathRemoveFileSpecA(steamPath);
+			SetEnvironmentVariableA("SteamPath", steamPath);
+		}
+	}
+#endif
 
 	// The overlay resolves the logged-in account to render the friends list and
 	// the invite UI. With no user it has nothing to show, which is why invites
@@ -156,7 +171,7 @@ static void WriteAppIDFile()
 		if (PathRemoveFileSpecA(exePath))
 		{
 			char fullPath[MAX_PATH] = { 0 };
-			_snprintf_s(fullPath, sizeof(fullPath), _TRUNCATE, "%s\\steam_appid.txt", exePath);
+			_snprintf_s(fullPath, sizeof(fullPath), _TRUNCATE, "%s" PLAT_SEP_STR "steam_appid.txt", exePath);
 
 			f = nullptr;
 			if (fopen_s(&f, fullPath, "wb") == 0 && f)
@@ -198,6 +213,41 @@ S_API const char* S_CALLTYPE SteamAPI_GetSteamInstallPath()
 
 	if (g_bHaveInstallPath)
 		return g_InstallPath;
+
+#if !defined(_WIN32)
+
+	// Linux has no registry to ask, so the install location is found by
+	// probing the places Steam actually puts steamclient.so. Which one
+	// exists depends on how Steam was installed, and the Steamworks SDK
+	// keeps its own copy, so try all of them and take the first hit.
+	static const char* kCandidates[] = {
+		"/.steam/sdk64",
+		"/.local/share/Steam/linux64",
+		"/.steam/steam/ubuntu12_64",
+		"/.local/share/Steam/ubuntu12_64",
+		"/.steam/debian-installation/ubuntu12_64",
+	};
+
+	const std::string home = PlatHomeDir();
+	if (!home.empty())
+	{
+		for (const char* rel : kCandidates)
+		{
+			const std::string dir = home + rel;
+			if (!PlatFileExists(dir + PLAT_SEP_STR "steamclient.so"))
+				continue;
+
+			snprintf(g_InstallPath, MAX_PATH, "%s", dir.c_str());
+			g_bHaveInstallPath = true;
+			UCOLOG("[UCOnline2] Steam install path --> %s", g_InstallPath);
+			return g_InstallPath;
+		}
+	}
+
+	UCOLOG("[UCOnline2] No steamclient.so found under %s", home.c_str());
+	return "UCOnline2_InvalidPath";
+
+#else
 
 	DWORD ActiveProcessPID = 0;
 	LSTATUS GetPID = GetRegistryDWORD("Software\\Valve\\Steam\\ActiveProcess", "pid", ActiveProcessPID);
@@ -261,11 +311,54 @@ S_API const char* S_CALLTYPE SteamAPI_GetSteamInstallPath()
 	}
 
 	return "UCOnline2_InvalidPath";
+
+#endif // !_WIN32
+}
+
+// ============================================================
+// SteamRealPath -- Linux SDK only.
+//
+// The Linux SDK exports this and Windows does not, so a game that was
+// written for both ends up calling it on Linux only. It is used to turn a
+// path into the real one on disk (following symlinks), which matters
+// because games are often launched through a wrapper that puts the
+// library somewhere else.
+//
+// The behaviour implemented here is the useful one: with a path, hand
+// back its absolute, symlink-resolved form; with no path, hand back the
+// directory this library was loaded from.
+// ============================================================
+S_API const char* S_CALLTYPE SteamRealPath(const char* path)
+{
+	static char s_buf[MAX_PATH] = { 0 };
+
+	if (!path || !path[0])
+	{
+		const std::string self = PlatModulePathOf((void*)&SteamRealPath);
+		const size_t slash = self.rfind(PLAT_SEP);
+		snprintf(s_buf, MAX_PATH, "%s",
+			(slash == std::string::npos) ? "" : self.substr(0, slash).c_str());
+		return s_buf;
+	}
+
+	char resolved[MAX_PATH] = { 0 };
+	if (realpath(path, resolved))
+	{
+		snprintf(s_buf, MAX_PATH, "%s", resolved);
+		return s_buf;
+	}
+
+	snprintf(s_buf, MAX_PATH, "%s", path);
+	return s_buf;
 }
 
 S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* pszVersions, SteamErrMsg* pOutErr)
 {
 	UCOLOG("[UCOnline2] SteamAPI_Init\r\n");
+	// Deferred start-up (plugins, DLC store, local cloud). On Windows this
+	// already ran from DllMain and is a no-op here; on Linux the ELF
+	// constructor ran too early for it.
+	UcoOnLibraryReady();
 	SetAppIDEnv();
 	WriteAppIDFile();
 	UCOLOG("[UCOnline2] AppID forced to %u", g_ForcedAppId);
@@ -390,7 +483,7 @@ S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* psz
 					bModule ? "loaded" : "NOT loaded", g_bLaunchedBySteam ? 1 : 0,
 					pUtils->IsOverlayEnabled() ? 1 : 0);
 
-				if (!g_bLaunchedBySteam && s_PluginLoader.GetWarnOverlayDisabled())
+				if (!g_bLaunchedBySteam && UcoLoader().GetWarnOverlayDisabled())
 				{
 					UCOColor(FOREGROUND_RED | FOREGROUND_INTENSITY,
 						"[UCOnline2] The Steam overlay will NOT work: this process was not "
@@ -487,7 +580,7 @@ S_API ESteamAPIInitResult S_CALLTYPE SteamInternal_SteamAPI_Init(const char* psz
 				ctx.HSteamPipe       = g_ClientPipe;
 				ctx.Log              = &UCOLOG;
 				ctx.RegisterCallbackPatcher = &UCO_RegisterCallbackPatcher;
-				s_PluginLoader.InitPlugins(&ctx);
+				UcoLoader().InitPlugins(&ctx);
 
 				if (splitSteamContext)
 				{
@@ -564,6 +657,40 @@ S_API bool S_CALLTYPE SteamAPI_IsSteamRunning()
 {
 	UCOLOG_HOT("[UCOnline2] SteamAPI_IsSteamRunning");
 
+#if !defined(_WIN32)
+
+	// Steam records its pid in ~/.steam/steam.pid on Linux. That file is
+	// left behind by a crashed client, so the pid is checked against
+	// /proc before believing it.
+	const std::string home = PlatHomeDir();
+	if (home.empty())
+		return false;
+
+	const std::string pidPath = home + "/.steam/steam.pid";
+	FILE* f = fopen(pidPath.c_str(), "rb");
+	if (!f)
+	{
+		UCOColor(FOREGROUND_RED | FOREGROUND_INTENSITY, "[UCOnline2] No steam.pid (SteamAPI_IsSteamRunning)!\r\n");
+		return false;
+	}
+
+	unsigned pid = 0;
+	const int scanned = fscanf(f, "%u", &pid);
+	fclose(f);
+
+	if (scanned != 1 || pid == 0)
+		return false;
+
+	if (!PlatIsProcessRunning(pid))
+	{
+		UCOLOG("[UCOnline2] Steam pid %u is not running (SteamAPI_IsSteamRunning)!\r\n", pid);
+		return false;
+	}
+
+	return true;
+
+#else
+
 	DWORD ActiveProcessPID = 0;
 	LSTATUS GetPID = GetRegistryDWORD("Software\\Valve\\Steam\\ActiveProcess", "pid", ActiveProcessPID);
 
@@ -598,6 +725,8 @@ S_API bool S_CALLTYPE SteamAPI_IsSteamRunning()
 	}
 
 	return false;
+
+#endif // !_WIN32
 }
 
 S_API void S_CALLTYPE SteamAPI_ReleaseCurrentThreadMemory()

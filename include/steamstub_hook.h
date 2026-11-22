@@ -13,6 +13,8 @@
 // the current upstream (K0oRui fork): the check is `cmp al/bl, 30h ; jz owned`,
 // and we rewrite the JZ to an unconditional JMP so the pass branch is always
 // taken. x86-64 focused. Requires MinHook. All state is static (per-DLL).
+#if defined(_WIN32)
+
 #include <windows.h>
 #include <intrin.h>
 #include <atomic>
@@ -124,3 +126,18 @@ static inline bool Install(LogFn log)
 }
 
 } // namespace UcoSteamStub
+
+#else // !_WIN32
+
+// The Steam DRM exe-wrapper this bypasses is a Windows-only thing: it is
+// the launcher stub that ships with the Windows Steam client. There is no
+// equivalent on Linux, and the hook it needs (patching GetTickCount's
+// caller in place) is an inline code patch, which this build does not do.
+//
+// So on Linux the bypass is simply absent -- there is nothing to bypass.
+namespace UcoSteamStub {
+typedef void (*LogFn)(const char*);
+static inline bool Install(LogFn log) { (void)log; return false; }
+} // namespace UcoSteamStub
+
+#endif // !_WIN32

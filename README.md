@@ -613,6 +613,10 @@ If MSBuild isn't found, `build.bat` will tell you where to get it. That script h
 a preset path matching my personal setup — if it doesn't match yours you'll need
 to edit it, or you'll error out even with everything installed.
 
+**Linux (x64):** the same source tree builds a `libsteam_api.so` with CMake —
+see **[LINUX.md](LINUX.md)** for the build, the install steps and what differs
+from the Windows build.
+
 ## Forking / Modifications
 
 - Please feel free to fork this and modify it however you see fit, and if you feel it would benefit the original repo, make a PR and I'll look into it.

@@ -8,7 +8,7 @@
 
 #pragma once
 
-#ifdef _DEBUG
+#if defined(_DEBUG) && defined(_WIN32)
 
 #include <Windows.h>
 #include <string>

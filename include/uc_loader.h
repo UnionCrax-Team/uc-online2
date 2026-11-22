@@ -18,8 +18,8 @@
  */
 #pragma once
 
-#include <Windows.h>
-#include <Shlwapi.h>
+#include "platform.h"
+
 #include <vector>
 #include <algorithm>
 #include <string>
@@ -43,7 +43,7 @@ public:
 		if (len == 0) return;
 		if (!PathRemoveFileSpecA(exeDir)) return;
 
-		_snprintf_s(m_IniPath, MAX_PATH, _TRUNCATE, "%s\\union-crax.ini", exeDir);
+		_snprintf_s(m_IniPath, MAX_PATH, _TRUNCATE, "%s" PLAT_SEP_STR "union-crax.ini", exeDir);
 
 		DWORD attribs = GetFileAttributesA(m_IniPath);
 		if (attribs == INVALID_FILE_ATTRIBUTES)
@@ -330,7 +330,7 @@ uint32 GetOgAppId()
 			return;
 
 		char dllPath[MAX_PATH] = { 0 };
-		if (_snprintf_s(dllPath, MAX_PATH, _TRUNCATE, "%s\\%s", exeDir, folderName) == _TRUNCATE)
+		if (_snprintf_s(dllPath, MAX_PATH, _TRUNCATE, "%s" PLAT_SEP_STR "%s", exeDir, folderName) == _TRUNCATE)
 			return;
 
 		DWORD folderAttribs = GetFileAttributesA(dllPath);
@@ -338,7 +338,7 @@ uint32 GetOgAppId()
 			return;
 
 		char findPattern[MAX_PATH] = { 0 };
-		if (_snprintf_s(findPattern, MAX_PATH, _TRUNCATE, "%s\\*.dll", dllPath) == _TRUNCATE)
+		if (_snprintf_s(findPattern, MAX_PATH, _TRUNCATE, "%s" PLAT_SEP_STR PLAT_DLL_PATTERN, dllPath) == _TRUNCATE)
 			return;
 
 		std::vector<std::string> names;
@@ -356,7 +356,7 @@ uint32 GetOgAppId()
 				continue;
 
 			char fullPath[MAX_PATH] = { 0 };
-			if (_snprintf_s(fullPath, MAX_PATH, _TRUNCATE, "%s\\%s", dllPath, fd.cFileName) == _TRUNCATE)
+			if (_snprintf_s(fullPath, MAX_PATH, _TRUNCATE, "%s" PLAT_SEP_STR "%s", dllPath, fd.cFileName) == _TRUNCATE)
 				continue;
 
 			names.push_back(fd.cFileName);
