@@ -82,21 +82,21 @@ namespace UcoCloudEmu {
     inline bool ResolvePath(const char* name, std::string& out) {
         if (!s_enabled || !name || !name[0]) return false;
         std::string rel(name);
-        for (char& c : rel) if (c == '/') c = '\\';
-        while (!rel.empty() && rel[0] == '\\') rel.erase(0, 1);
+        for (char& c : rel) if (c == '/') c = PLAT_SEP;
+        while (!rel.empty() && rel[0] == PLAT_SEP) rel.erase(0, 1);
         if (rel.empty()) return false;
         // ".." anywhere is a traversal attempt; a game has no business doing it.
-        if (rel == ".." || rel.find("..\\") != std::string::npos) return false;
-        if (rel.size() >= 3 && rel.compare(rel.size() - 3, 3, "\\..") == 0) return false;
+        if (rel == ".." || rel.find(".." PLAT_SEP_STR) != std::string::npos) return false;
+        if (rel.size() >= 3 && rel.compare(rel.size() - 3, 3, PLAT_SEP_STR "..") == 0) return false;
         if (rel.size() > 1 && rel[1] == ':') return false;      // absolute path
-        out = s_root + "\\" + rel;
+        out = s_root + PLAT_SEP_STR + rel;
         return true;
     }
 
     inline void EnsureParentDirs(const std::string& full) {
         size_t pos = s_root.size();
         for (;;) {
-            size_t slash = full.find('\\', pos + 1);
+            size_t slash = full.find(PLAT_SEP, pos + 1);
             if (slash == std::string::npos) break;
             CreateDirectoryA(full.substr(0, slash).c_str(), nullptr);
             pos = slash;
@@ -135,7 +135,7 @@ namespace UcoCloudEmu {
         size_t slash = dir.find_last_of("\\/");
         dir = (slash == std::string::npos) ? std::string(".") : dir.substr(0, slash);
         std::lock_guard<std::recursive_mutex> g(s_lock);
-        s_root = dir + "\\uco_cloud";
+        s_root = dir + PLAT_SEP_STR "uco_cloud";
         CreateDirectoryA(s_root.c_str(), nullptr);
         s_enabled = true;
         UCOLOG("[UCOnline2] LocalSaves: Steam Cloud reported OFF; ISteamRemoteStorage "
@@ -253,14 +253,14 @@ namespace UcoCloudEmu {
 
     inline void ScanInto(const std::string& dir, const std::string& prefix) {
         WIN32_FIND_DATAA ffd{};
-        HANDLE h = FindFirstFileA((dir + "\\*").c_str(), &ffd);
+        HANDLE h = FindFirstFileA((dir + PLAT_SEP_STR "*").c_str(), &ffd);
         if (h == INVALID_HANDLE_VALUE) return;
         do {
             if (strcmp(ffd.cFileName, ".") == 0 || strcmp(ffd.cFileName, "..") == 0) continue;
             std::string rel = prefix.empty() ? std::string(ffd.cFileName)
                                              : prefix + "/" + ffd.cFileName;
             if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                ScanInto(dir + "\\" + ffd.cFileName, rel);
+                ScanInto(dir + PLAT_SEP_STR + ffd.cFileName, rel);
             else
                 s_listing.emplace_back(rel, (int32)ffd.nFileSizeLow);
         } while (FindNextFileA(h, &ffd));

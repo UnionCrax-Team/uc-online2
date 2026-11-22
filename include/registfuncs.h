@@ -10,7 +10,7 @@
  */
 #pragma once
 
-#include <Windows.h>
+#include "platform.h"
 
 LSTATUS GetRegistryDWORD(const char* cszPath, const char* cszKey, DWORD& dwValue)
 {

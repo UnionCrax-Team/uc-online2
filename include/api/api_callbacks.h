@@ -328,7 +328,10 @@ S_API HSteamUser S_CALLTYPE Steam_GetHSteamUserCurrent()
 {
 	UCOLOG("[UCOnline2] Steam_GetHSteamUserCurrent\r\n");
 
-	return ::Steam_GetHSteamUserCurrent();
+	// NOTE: this used to call ::Steam_GetHSteamUserCurrent() -- itself --
+	// which is an infinite recursion and ends in a stack overflow the first
+	// time a game calls it. The current user is g_ClientUser.
+	return g_ClientUser;
 }
 
 S_API void S_CALLTYPE Steam_RegisterInterfaceFuncs(void* hModule)

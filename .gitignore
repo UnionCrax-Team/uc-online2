@@ -28,3 +28,5 @@ tools/UCO2.Patcher/publish/
 # Standalone C++ check build output (tests/build_cloudemu_test.bat)
 tests/*.exe
 tests/*.obj
+
+.remember

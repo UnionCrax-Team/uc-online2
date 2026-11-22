@@ -1,4 +1,4 @@
-#ifdef _DEBUG
+#if defined(_DEBUG) && defined(_WIN32)
 CDumpHandler* g_pDumpHandler = nullptr;
 #endif
 
@@ -89,7 +89,7 @@ S_API void S_CALLTYPE SteamAPI_SetMiniDumpComment(const char* comment)
 
 	if (comment && strlen(comment) > 0)
 	{
-		#ifdef _DEBUG
+		#if defined(_DEBUG) && defined(_WIN32)
 		if (g_pDumpHandler && g_pDumpHandler->IsReady())
 		{
 			g_pDumpHandler->ClearComment();
@@ -145,7 +145,7 @@ S_API void S_CALLTYPE SteamAPI_WriteMiniDump(uint32 code, void* info, uint32 bui
 
 	if (info)
 	{
-		#ifdef _DEBUG
+		#if defined(_DEBUG) && defined(_WIN32)
 		if (g_pDumpHandler && g_pDumpHandler->IsReady())
 		{
 			g_pDumpHandler->WriteDump(code, (_EXCEPTION_POINTERS*)info);

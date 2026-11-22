@@ -1,7 +1,4 @@
-#include <Windows.h>
-#include <Shlwapi.h>
-#include <DbgHelp.h>
-#include <new.h>
+#include "include/platform.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -25,7 +22,7 @@ S_API ISteamClient* g_pSteamClientGameServer = nullptr;
 #include "include/globals.h"
 #include "include/uc_loader.h"
 #include "include/dump_handler.h"
-#include "include/MinHook.h"
+#include "include/hook_shim.h"
 
 void InstallEarlyAppIdHook(ISteamUtils* pUtils);
 
@@ -275,8 +272,17 @@ static void UcoInstallSteamClientAuthHooks(HMODULE hSteamClient)
     if (s_hookedModule == hSteamClient)
         return;
 
-    MH_Initialize();
-
+#if !defined(_WIN32)
+    // These three are plain exported functions of steamclient, so catching a
+    // caller would mean rewriting machine code -- something this build does
+    // not do (the Linux port patches vtable slots instead). The real Linux
+    // SDK does not export these symbols either, so nothing is lost: the
+    // tracing is a diagnostic, not a behaviour.
+    (void)hSteamClient;
+    UCOLOG("[UCOnline2] steamclient auth tracing: not available on this platform");
+    s_hookedModule = hSteamClient;
+    return;
+#else
     struct Item { const char* name; void* detour; void** original; };
     Item items[] = {
         { "Steam_GetGSHandle", (void*)&Hooked_SteamGetGSHandle, (void**)&g_OriginalSteamGetGSHandle },
@@ -294,20 +300,16 @@ static void UcoInstallSteamClientAuthHooks(HMODULE hSteamClient)
             continue;
         }
 
-        MH_STATUS st = MH_CreateHook(target, item.detour, item.original);
-        if (st == MH_ERROR_ALREADY_CREATED)
-            st = MH_EnableHook(target);
-        else if (st == MH_OK)
-            st = MH_EnableHook(target);
-
-        if (st == MH_OK)
+        const PlatHookStatus st = PlatHookFunction(target, item.detour, item.original);
+        if (st == PLAT_HOOK_OK || st == PLAT_HOOK_ALREADY)
             ++installed;
         else
-            UCOLOG("[UCOnline2] steamclient hook failed: %s status=%d", item.name, st);
+            UCOLOG("[UCOnline2] steamclient hook failed: %s status=%d", item.name, (int)st);
     }
 
     s_hookedModule = hSteamClient;
     UCOLOG("[UCOnline2] steamclient auth tracing: %d/3 hooks installed", installed);
+#endif
 }
 
 // ============================================================
@@ -334,10 +336,16 @@ void* InitSteamClient(HMODULE* phMod, bool bLocal, const char* iface)
 	}
 	else
 	{
-		#if defined(_M_IX86)
-			_snprintf_s(dllPath, MAX_PATH, _TRUNCATE, "%s\\steamclient.dll", installDir);
-		#elif defined(_M_AMD64)
-			_snprintf_s(dllPath, MAX_PATH, _TRUNCATE, "%s\\steamclient64.dll", installDir);
+		#if defined(_WIN32)
+			#if defined(_M_IX86)
+				_snprintf_s(dllPath, MAX_PATH, _TRUNCATE, "%s" PLAT_SEP_STR "steamclient.dll", installDir);
+			#elif defined(_M_AMD64)
+				_snprintf_s(dllPath, MAX_PATH, _TRUNCATE, "%s" PLAT_SEP_STR "steamclient64.dll", installDir);
+			#endif
+		#else
+			// Linux has a single steamclient.so; the 32/64 split Valve used on
+			// Windows does not exist here.
+			_snprintf_s(dllPath, MAX_PATH, _TRUNCATE, "%s" PLAT_SEP_STR "steamclient.so", installDir);
 		#endif
 	}
 
@@ -345,7 +353,7 @@ void* InitSteamClient(HMODULE* phMod, bool bLocal, const char* iface)
 	{
 		*phMod = LoadLibraryExA(dllPath, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
 		if (!*phMod)
-			UCOColor(0, "[UCOnline2] Failed to load steamclient DLL");
+			UCOColor(0, "[UCOnline2] Failed to load steamclient");
 	}
 	else
 	{
@@ -360,15 +368,20 @@ void* InitSteamClient(HMODULE* phMod, bool bLocal, const char* iface)
 			return nullptr;
 		}
 
-		#if defined(_M_IX86)
-			*phMod = LoadLibraryW(L"steamclient.dll");
-		#elif defined(_M_AMD64)
-			*phMod = LoadLibraryW(L"steamclient64.dll");
+		#if defined(_WIN32)
+			#if defined(_M_IX86)
+				*phMod = LoadLibraryW(L"steamclient.dll");
+			#elif defined(_M_AMD64)
+				*phMod = LoadLibraryW(L"steamclient64.dll");
+			#endif
+		#else
+			// Fall back to whatever the loader can find on the search path.
+			*phMod = LoadLibraryA("steamclient.so");
 		#endif
 
 		if (!*phMod)
 		{
-			UCOColor(0, "[UCOnline2] Cannot find steamclient DLL");
+			UCOColor(0, "[UCOnline2] Cannot find steamclient");
 			return nullptr;
 		}
 	}
@@ -491,75 +504,117 @@ static void LoadGameOverlay()
 // DllMain
 // ============================================================
 
-// File-scope so the SteamAPI_Init path in api_client.h can call
-// InitPlugins() on it, and DLL_PROCESS_DETACH can call
-// ShutdownPlugins().
-CDLLLoader s_PluginLoader;
-
-BOOL WINAPI DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
+// The plugin/config loader.
+//
+// It is a function-local static rather than a file-scope global on
+// purpose. The ELF constructor that brings the library up runs BEFORE the
+// C++ static initialisers of this translation unit (the loader walks
+// .init_array in link order, and the __attribute__((constructor)) function
+// lands ahead of the compiler's static-init thunks), so a global CDLLLoader
+// would not be constructed yet at the moment the constructor needs to read
+// union-crax.ini. A function-local static is built on first use, which is
+// always in the right order.
+CDLLLoader& UcoLoader()
 {
-	if (dwReason == DLL_PROCESS_ATTACH)
+	static CDLLLoader loader;
+	return loader;
+}
+
+// ============================================================
+// Process attach / detach
+//
+// Split out of DllMain so the Linux build can run the same code from an
+// ELF constructor. On Windows this is DllMain(DLL_PROCESS_ATTACH); on
+// Linux it is a __attribute__((constructor)) function, which the dynamic
+// loader runs when the library is mapped -- the same moment in the
+// process lifetime.
+// ============================================================
+
+// Read union-crax.ini and copy it into the global state.
+//
+// Everything touched here is plain data, so this is safe to call from the
+// Linux ELF constructor -- which runs BEFORE the C++ static initialisers of
+// this translation unit.
+static void UcoApplyConfig(CDLLLoader& loader)
+{
+	loader.ReadConfig();
+	g_ForcedAppId = loader.GetAppId();
+	g_OriginalAppId = loader.GetOgAppId();
+	if (loader.GetSDREnabled())
 	{
-		UCOLOG("[UCOnline2] DllMain -> DLL_PROCESS_ATTACH");
+		g_SteamNetworkingAppId = g_OriginalAppId;
+		if (g_SteamNetworkingAppId == 0)
+			UCOLOG("[UCOnline2] SDR=yes ignored: ogAppId is required");
+	}
 
-		s_PluginLoader.ReadConfig();
-		g_ForcedAppId = s_PluginLoader.GetAppId();
-		g_OriginalAppId = s_PluginLoader.GetOgAppId();
-		if (s_PluginLoader.GetSDREnabled())
-		{
-			g_SteamNetworkingAppId = g_OriginalAppId;
-			if (g_SteamNetworkingAppId == 0)
-				UCOLOG("[UCOnline2] SDR=yes ignored: ogAppId is required");
-		}
+	g_bRealAppIdEnv = loader.GetRealAppIdEnv();
+	if (g_bRealAppIdEnv && g_OriginalAppId == 0)
+	{
+		UCOLOG("[UCOnline2] RealAppIdEnv=yes ignored: ogAppId is required");
+		g_bRealAppIdEnv = false;
+	}
 
-		g_bRealAppIdEnv = s_PluginLoader.GetRealAppIdEnv();
-		if (g_bRealAppIdEnv && g_OriginalAppId == 0)
-		{
-			UCOLOG("[UCOnline2] RealAppIdEnv=yes ignored: ogAppId is required");
-			g_bRealAppIdEnv = false;
-		}
+	loader.GetClientVersion(g_LegacyClientVersion, sizeof(g_LegacyClientVersion));
+	if (g_LegacyClientVersion[0])
+		UCOLOG("[UCOnline2] SteamClient() accessor will be pinned to %s", g_LegacyClientVersion);
 
-		s_PluginLoader.GetClientVersion(g_LegacyClientVersion, sizeof(g_LegacyClientVersion));
-		if (g_LegacyClientVersion[0])
-			UCOLOG("[UCOnline2] SteamClient() accessor will be pinned to %s", g_LegacyClientVersion);
+	// Read before anything chatty runs, so the hot-path traces honour it.
+	g_bVerboseLog = loader.GetVerboseLog();
+}
 
-		SetAppIDEnv();
-		WriteAppIDFile();
+static void UcoOnProcessAttach(HMODULE hModule)
+{
+	UCOLOG("[UCOnline2] process attach");
 
-		// Load the game overlay early to ensure it can hook into graphics APIs.
-		// [Settings] LoadOverlay=no opts out: the renderer hooks D3D/DXGI, and a
-		// game that objects to that has no other way to keep it out.
-		if (s_PluginLoader.GetLoadOverlay())
-			LoadGameOverlay();
-		else
-			UCOLOG("[UCOnline2] LoadOverlay=no -- not loading GameOverlayRenderer");
+	CDLLLoader& loader = UcoLoader();
+	UcoApplyConfig(loader);
 
-		// [Settings] RealAppIdEnv: some games read the SteamAppId ENV at startup and
-		// quit if it isn't their real AppId (Valheim's SteamManager: "Invalid APPID"
-		// -> Application.Quit(), BEFORE it ever calls SteamAPI_Init). Expose ogAppId in
-		// the env now for that early read; SteamAPI_Init re-stamps the forced (spoof)
-		// id before it connects to Steam, so ownership still rides the free AppId. Done
-		// AFTER the overlay load so the overlay/relay context stays on the forced id.
-		if (g_bRealAppIdEnv)
-		{
-			SetSteamAppEnvironment(g_OriginalAppId);
-			UCOLOG("[UCOnline2] RealAppIdEnv: SteamAppId env -> %u for the game's startup "
-				"check (the Steam connection still uses %u)", g_OriginalAppId, g_ForcedAppId);
-		}
+	SetAppIDEnv();
+	WriteAppIDFile();
 
-		char dllPath[MAX_PATH] = { 0 };
-		DWORD len = GetModuleFileNameA(hModule, dllPath, sizeof(dllPath));
+	// Load the game overlay early to ensure it can hook into graphics APIs.
+	// [Settings] LoadOverlay=no opts out: the renderer hooks D3D/DXGI, and a
+	// game that objects to that has no other way to keep it out.
+	// The overlay is a Windows-only renderer proxy; on Linux there is nothing
+	// to load.
+#if defined(_WIN32)
+	if (loader.GetLoadOverlay())
+		LoadGameOverlay();
+	else
+		UCOLOG("[UCOnline2] LoadOverlay=no -- not loading GameOverlayRenderer");
+#endif
 
-		if (len == 0)
-			return FALSE;
+	// [Settings] RealAppIdEnv: some games read the SteamAppId ENV at startup and
+	// quit if it isn't their real AppId (Valheim's SteamManager: "Invalid APPID"
+	// -> Application.Quit(), BEFORE it ever calls SteamAPI_Init). Expose ogAppId in
+	// the env now for that early read; SteamAPI_Init re-stamps the forced (spoof)
+	// id before it connects to Steam, so ownership still rides the free AppId. Done
+	// AFTER the overlay load so the overlay/relay context stays on the forced id.
+	if (g_bRealAppIdEnv)
+	{
+		SetSteamAppEnvironment(g_OriginalAppId);
+		UCOLOG("[UCOnline2] RealAppIdEnv: SteamAppId env -> %u for the game's startup "
+			"check (the Steam connection still uses %u)", g_OriginalAppId, g_ForcedAppId);
+	}
 
-		if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-			return FALSE;
+	char dllPath[MAX_PATH] = { 0 };
+	DWORD len = GetModuleFileNameA(hModule, dllPath, sizeof(dllPath));
 
-		UCOLOG("[UCOnline2] DLL Path: %s", dllPath);
+	if (len == 0)
+		return;
 
-		// The actual likelihood of this being used or even working is low, as it wouldn't even work if it were named anything else.
-		// However, I'm positive that compiling without this will cause it to scream at me and I no no like that. It make me maaaad.
+#if defined(_WIN32)
+	// Win32 reports a truncated buffer through the last error. On Linux
+	// GetLastError() is errno, which would collide with the Win32 value.
+	if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+		return;
+#endif
+
+	UCOLOG("[UCOnline2] library path: %s", dllPath);
+
+	// The actual likelihood of this being used or even working is low, as it wouldn't even work if it were named anything else.
+	// However, I'm positive that compiling without this will cause it to scream at me and I no no like that. It make me maaaad.
+	#if defined(_WIN32)
 		#if defined(_M_IX86)
 			if (!StrStrIA(dllPath, "steam_api.dll"))
 				UCOLOG("[UCOnline2] Warning: not named steam_api.dll");
@@ -567,75 +622,140 @@ BOOL WINAPI DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
 			if (!StrStrIA(dllPath, "steam_api64.dll"))
 				UCOLOG("[UCOnline2] Warning: not named steam_api64.dll");
 		#endif
+	#else
+		// The Linux SDK ships the 64-bit library as "libsteam_api.so" -- there
+		// is no separate 32-bit name.
+		if (!StrStrIA(dllPath, "libsteam_api.so"))
+			UCOLOG("[UCOnline2] Warning: not named libsteam_api.so");
+	#endif
 
-		UCOLOG("[UCOnline2] PID: %lu", GetCurrentProcessId());
-		UCOLOG("[UCOnline2] Thread: %lu", GetCurrentThreadId());
+	UCOLOG("[UCOnline2] PID: %lu", GetCurrentProcessId());
+	UCOLOG("[UCOnline2] Thread: %lu", GetCurrentThreadId());
 
-		InitializeSRWLock(&g_CtxLock);
-		InitializeSRWLock(&g_CallbackLock);
+	InitializeSRWLock(&g_CtxLock);
+	InitializeSRWLock(&g_CallbackLock);
 
-		// Read before anything chatty runs, so the hot-path traces honour it.
-		g_bVerboseLog = s_PluginLoader.GetVerboseLog();
-		if (g_bVerboseLog)
-			UCOLOG("[UCOnline2] VerboseLog enabled -- per-frame callback traces will be logged");
+	if (g_bVerboseLog)
+		UCOLOG("[UCOnline2] VerboseLog enabled -- per-frame callback traces will be logged");
 
-		#ifdef _DEBUG
-		g_pDumpHandler = new CDumpHandler();
-		#endif
+	#if defined(_DEBUG) && defined(_WIN32)
+	g_pDumpHandler = new CDumpHandler();
+	#endif
+}
 
-		s_PluginLoader.LoadPlugins();
+// Start-up work that needs the global C++ objects to be alive: the plugin
+// loader's module list, the DLC store, the local cloud, the local inventory.
+//
+// On Windows this runs from DllMain, because the CRT has already run the
+// static initialisers by then. On Linux it has to wait for SteamAPI_Init:
+// the ELF constructor runs before the static initialisers, so a std::vector
+// or std::string global would not be constructed yet.
+void UcoOnLibraryReady()
+{
+	static bool s_bReady = false;
+	if (s_bReady)
+		return;
+	s_bReady = true;
 
-		UCOLOG("[UCOnline2] %zu plugin(s) loaded", s_PluginLoader.LoadedCount());
+	CDLLLoader& loader = UcoLoader();
 
-		g_bSteamStubEnabled = s_PluginLoader.GetSteamStubEnabled();
-		if (g_bSteamStubEnabled)
-		{
-			SteamStub_Init();
-		}
+	loader.LoadPlugins();
 
-		// Local ISteamInventory emulation so in-game purchases/grants succeed
-		// and persist (real Steam has no items for the spoofed AppId).
-		if (s_PluginLoader.GetInventoryAutoGrant())
-			UcoInvEmu::Init(s_PluginLoader.GetIniPath(), s_PluginLoader.GetOgAppId());
+	UCOLOG("[UCOnline2] %zu plugin(s) loaded", loader.LoadedCount());
 
-		// Local Steam Cloud: keep saves out of the spoofed AppId's shared
-		// 480/remote bucket, where UCO2 games collide with each other.
-		if (s_PluginLoader.GetLocalSaves())
-			UcoCloudEmu::Init(s_PluginLoader.GetIniPath());
+	g_bSteamStubEnabled = loader.GetSteamStubEnabled();
+	if (g_bSteamStubEnabled)
+	{
+		SteamStub_Init();
+	}
 
-		// DLC ownership: [DLC] UnlockAll + named entries, plus the legacy
-		// [Settings] UnlockDLC list. Loaded before any game code can ask.
-		UcoDlcStore::Load(s_PluginLoader.GetIniPath(), s_PluginLoader.GetOgAppId());
-		UCOLOG("[UCOnline2] DLC store: UnlockAll=%d, %d entr%s",
-			UcoDlcStore::UnlockAll() ? 1 : 0, UcoDlcStore::Count(),
-			UcoDlcStore::Count() == 1 ? "y" : "ies");
+	// Local ISteamInventory emulation so in-game purchases/grants succeed
+	// and persist (real Steam has no items for the spoofed AppId).
+	if (loader.GetInventoryAutoGrant())
+		UcoInvEmu::Init(loader.GetIniPath(), loader.GetOgAppId());
 
-		const bool passthroughTicket = s_PluginLoader.GetPassthroughTicketEnabled();
-		const bool emulateTicket = s_PluginLoader.GetEmulateTicketEnabled();
-		g_bEmulateAuthTicket = emulateTicket && !passthroughTicket;
-		if (passthroughTicket) {
-			UCOLOG("[UCOnline2] PassthroughTicket enabled -- using genuine Steam tickets%s",
-				emulateTicket ? " (overrides EmulateTicket)" : "");
-		}
-		if (g_bEmulateAuthTicket) {
-			uint32 emulatedAppId = s_PluginLoader.GetOgAppId();
-			if (emulatedAppId == 0) emulatedAppId = s_PluginLoader.GetAppId();
-			CSteamUserStub::SetEmulatedApp(emulatedAppId);
-		}
+	// Local Steam Cloud: keep saves out of the spoofed AppId's shared
+	// 480/remote bucket, where UCO2 games collide with each other.
+	if (loader.GetLocalSaves())
+		UcoCloudEmu::Init(loader.GetIniPath());
+
+	// DLC ownership: [DLC] UnlockAll + named entries, plus the legacy
+	// [Settings] UnlockDLC list. Loaded before any game code can ask.
+	UcoDlcStore::Load(loader.GetIniPath(), loader.GetOgAppId());
+	UCOLOG("[UCOnline2] DLC store: UnlockAll=%d, %d entr%s",
+		UcoDlcStore::UnlockAll() ? 1 : 0, UcoDlcStore::Count(),
+		UcoDlcStore::Count() == 1 ? "y" : "ies");
+
+	const bool passthroughTicket = loader.GetPassthroughTicketEnabled();
+	const bool emulateTicket = loader.GetEmulateTicketEnabled();
+	g_bEmulateAuthTicket = emulateTicket && !passthroughTicket;
+	if (passthroughTicket) {
+		UCOLOG("[UCOnline2] PassthroughTicket enabled -- using genuine Steam tickets%s",
+			emulateTicket ? " (overrides EmulateTicket)" : "");
+	}
+	if (g_bEmulateAuthTicket) {
+		uint32 emulatedAppId = loader.GetOgAppId();
+		if (emulatedAppId == 0) emulatedAppId = loader.GetAppId();
+		CSteamUserStub::SetEmulatedApp(emulatedAppId);
+	}
+}
+
+#if defined(_WIN32)
+static void UcoOnProcessDetach()
+{
+	UCOLOG("[UCOnline2] process detach");
+	UcoLoader().ShutdownPlugins();
+	if (g_bSteamStubEnabled)
+	{
+		MH_DisableHook(reinterpret_cast<LPVOID*>(GetTickCount));
+		MH_Uninitialize();
+	}
+}
+#endif
+
+#if defined(_WIN32)
+
+BOOL WINAPI DllMain(HMODULE hModule, DWORD dwReason, LPVOID lpReserved)
+{
+	if (dwReason == DLL_PROCESS_ATTACH)
+	{
+		UCOLOG("[UCOnline2] DllMain -> DLL_PROCESS_ATTACH");
+		UcoOnProcessAttach(hModule);
+		UcoOnLibraryReady();
 	}
 	else if (dwReason == DLL_PROCESS_DETACH)
 	{
 		UCOLOG("[UCOnline2] DllMain -> DLL_PROCESS_DETACH");
-		s_PluginLoader.ShutdownPlugins();
-		if (g_bSteamStubEnabled)
-		{
-			MH_DisableHook(reinterpret_cast<LPVOID*>(GetTickCount));
-			MH_Uninitialize();
-		}
+		UcoOnProcessDetach();
 	}
 
 	return TRUE;
 }
+
+#else
+
+// The ELF equivalent of DllMain(DLL_PROCESS_ATTACH). It runs when the
+// dynamic loader maps the library, which is the same point in the process
+// lifetime as the Windows attach notification.
+//
+// Only the plain-data part of the start-up happens here. The loader runs
+// .init_array in link order, and an __attribute__((constructor)) function
+// lands AHEAD of the compiler's static-initialisation thunks -- so at this
+// point the global std::vector/std::string objects of this translation unit
+// do not exist yet. Anything that touches them (plugins, the DLC store, the
+// local cloud) waits for UcoOnLibraryReady() at SteamAPI_Init time.
+__attribute__((constructor))
+static void UcoLibraryConstructor()
+{
+	UcoOnProcessAttach(nullptr);
+}
+
+// There is deliberately no __attribute__((destructor)) here. The C++ static
+// destructors run before .fini_array, so by the time an ELF destructor would
+// fire the plugin loader (a function-local static) may already have been
+// torn down. The loader's own destructor unloads the plugins instead.
+
+#endif // !_WIN32
 
 // ============================================================
 // CCallbackDispatcher
@@ -1276,7 +1396,7 @@ CCallbackDispatcher* GetDispatcher()
 // CDumpHandler (_DEBUG only)
 // ============================================================
 
-#ifdef _DEBUG
+#if defined(_DEBUG) && defined(_WIN32)
 
 #include <DbgHelp.h>
 
@@ -1549,29 +1669,20 @@ void InstallEarlyAppIdHook(ISteamUtils* pUtils)
         return;
 
     void** utilsVT = *reinterpret_cast<void***>(pUtils);
-    void* target = utilsVT[9];
-    if (g_pHookedGetAppIDTarget == target && g_pfnOriginalGetAppID)
+    if (g_pHookedGetAppIDTarget == (void*)utilsVT && g_pfnOriginalGetAppID)
         return;
 
-    MH_Initialize();
-    MH_STATUS status = MH_CreateHook(target, &Hooked_GetAppID,
+    const PlatHookStatus status = PlatHookVTableMethod(utilsVT, 9, (void*)&Hooked_GetAppID,
         reinterpret_cast<void**>(&g_pfnOriginalGetAppID));
-    if (status != MH_OK)
+    if (status == PLAT_HOOK_OK || status == PLAT_HOOK_ALREADY)
     {
-        UCOLOG("[UCOnline2] MH_CreateHook failed for early GetAppID: %d", status);
-        return;
-    }
-
-    status = MH_EnableHook(target);
-    if (status == MH_OK || status == MH_ERROR_ENABLED)
-    {
-        g_pHookedGetAppIDTarget = target;
+        g_pHookedGetAppIDTarget = (void*)utilsVT;
         UCOLOG("[UCOnline2] GetAppID hook installed early (will return %u)",
             g_OriginalAppId);
     }
     else
     {
-        UCOLOG("[UCOnline2] MH_EnableHook failed for early GetAppID: %d", status);
+        UCOLOG("[UCOnline2] GetAppID hook failed: %d", (int)status);
     }
 }
 
@@ -1983,8 +2094,6 @@ void UcoInstallUserAuthHooks(void* pIface, const char* ver)
     if (s_seenCount < (int)(sizeof(s_seen) / sizeof(s_seen[0])))
         s_seen[s_seenCount++] = (void*)vt;
 
-    MH_Initialize();
-
     void* getTicketDetour = L.ticketTakesIdentity
                           ? (void*)&Hooked_GetAuthSessionTicket4
                           : (void*)&Hooked_GetAuthSessionTicket3;
@@ -2006,19 +2115,13 @@ void UcoInstallUserAuthHooks(void* pIface, const char* ver)
         if (it.index < 0)                          // method absent in this version
             continue;
         ++applicable;
-        void* target = vt[it.index];
         void* dummyOriginal = nullptr;             // detours never call through
-        MH_STATUS st = MH_CreateHook(target, it.detour, &dummyOriginal);
-        if (st == MH_ERROR_ALREADY_CREATED)        // shared impl across versions
-        {
-            ++ok;
-            continue;
-        }
-        if (st == MH_OK && MH_EnableHook(target) == MH_OK)
+        const PlatHookStatus st = PlatHookVTableMethod(vt, it.index, it.detour, &dummyOriginal);
+        if (st == PLAT_HOOK_OK || st == PLAT_HOOK_ALREADY)
             ++ok;
         else
             UCOLOG("[UCOnline2] %s: failed to hook %s (vtable[%d]): %d",
-                ver, it.name, it.index, st);
+                ver, it.name, it.index, (int)st);
     }
 
     UCOLOG("[UCOnline2] auth ticket emulation: %d/%d hooks installed on %s%s",
@@ -2167,8 +2270,6 @@ void UcoInstallRemoteStorageHooks(void* pIface, const char* ver)
         (UcoCloudEmu::PfnGetFileNameAndSize)vt[L.nameAndSize],
         (UcoCloudEmu::PfnFileRead)vt[L.read]);
 
-    MH_Initialize();
-
     struct Item { int index; void* detour; const char* name; };
     const Item items[] = {
         { L.write,        (void*)&Hooked_RS_FileWrite,                 "FileWrite" },
@@ -2202,19 +2303,13 @@ void UcoInstallRemoteStorageHooks(void* pIface, const char* ver)
         if (it.index < 0)                          // method absent in this version
             continue;
         ++applicable;
-        void* target = vt[it.index];
         void* dummyOriginal = nullptr;             // detours never call through
-        MH_STATUS st = MH_CreateHook(target, it.detour, &dummyOriginal);
-        if (st == MH_ERROR_ALREADY_CREATED)        // shared impl across versions
-        {
-            ++ok;
-            continue;
-        }
-        if (st == MH_OK && MH_EnableHook(target) == MH_OK)
+        const PlatHookStatus st = PlatHookVTableMethod(vt, it.index, it.detour, &dummyOriginal);
+        if (st == PLAT_HOOK_OK || st == PLAT_HOOK_ALREADY)
             ++ok;
         else
             UCOLOG("[UCOnline2] %s: failed to hook %s (vtable[%d]): %d",
-                ver, it.name, it.index, st);
+                ver, it.name, it.index, (int)st);
     }
 
     UCOLOG("[UCOnline2] LocalSaves: %d/%d RemoteStorage hooks installed on %s",
@@ -2237,8 +2332,6 @@ void InstallSteamSpoofHooks()
     if (!bSpoofAppId)
         UCOLOG("[UCOnline2] No usable ogAppId: AppId spoof skipped "
                "(DLC and ticket hooks are unaffected)");
-
-    MH_Initialize();
 
     // ISteamUtils vtable: [9] = GetAppID.
     //   0:GetSecondsSinceAppActive  1:GetSecondsSinceComputerActive
@@ -2263,11 +2356,12 @@ void InstallSteamSpoofHooks()
     // ...and that pin is exactly what [Settings] Client breaks. A game pinned to
     // an old SteamClient asks for old interfaces too (Rivals of Aether takes
     // STEAMAPPS_INTERFACE_VERSION007), which is a different object with a
-    // different layout from the 008 we hook by index. These are inline hooks on
-    // the function bodies, so the old-version caller still lands in them, and we
-    // then hand a v007 `this` to the v008 implementation -- which faults inside
-    // steamclient. Skip the hooks in that case: losing DLC unlocking is a far
-    // better outcome than crashing the game mid-session.
+    // different layout from the 008 we hook by index. A vtable patch only
+    // reaches the vtable it patched, so an old-version caller keeps the
+    // original behaviour -- which is exactly what we want, since handing a
+    // v007 `this` to the v008 implementation faults inside steamclient. Skip
+    // the hooks in that case: losing DLC unlocking is a far better outcome
+    // than crashing the game mid-session.
     if (g_LegacyClientVersion[0] && (bSpoofAppId || UcoDlcStore::Active()))
     {
         UCOLOG("[UCOnline2] ISteamApps DLC hooks skipped: Client=%s means the game "
@@ -2280,23 +2374,22 @@ void InstallSteamSpoofHooks()
 
         struct DlcHook { int index; void* detour; void** original; const char* name; };
         const DlcHook hooks[] = {
-            { 6,  &Hooked_BIsSubscribedApp,          (void**)&g_pfnOriginalBIsSubscribedApp,    "BIsSubscribedApp" },
-            { 7,  &Hooked_BIsDlcInstalled,           (void**)&g_pfnOriginalBIsDlcInstalled,     "BIsDlcInstalled" },
-            { 8,  &Hooked_GetEarliestPurchaseUnixTime,(void**)&g_pfnOriginalGetEarliestPurchase, "GetEarliestPurchaseUnixTime" },
-            { 10, &Hooked_GetDLCCount,               (void**)&g_pfnOriginalGetDLCCount,         "GetDLCCount" },
-            { 11, &Hooked_BGetDLCDataByIndex,        (void**)&g_pfnOriginalBGetDLCDataByIndex,  "BGetDLCDataByIndex" },
+            { 6,  (void*)&Hooked_BIsSubscribedApp,          (void**)&g_pfnOriginalBIsSubscribedApp,    "BIsSubscribedApp" },
+            { 7,  (void*)&Hooked_BIsDlcInstalled,           (void**)&g_pfnOriginalBIsDlcInstalled,     "BIsDlcInstalled" },
+            { 8,  (void*)&Hooked_GetEarliestPurchaseUnixTime,(void**)&g_pfnOriginalGetEarliestPurchase, "GetEarliestPurchaseUnixTime" },
+            { 10, (void*)&Hooked_GetDLCCount,               (void**)&g_pfnOriginalGetDLCCount,         "GetDLCCount" },
+            { 11, (void*)&Hooked_BGetDLCDataByIndex,        (void**)&g_pfnOriginalBGetDLCDataByIndex,  "BGetDLCDataByIndex" },
         };
 
         int installed = 0;
         for (const DlcHook& h : hooks)
         {
-            void* target = appsVT[h.index];
-            MH_STATUS s = MH_CreateHook(target, h.detour, h.original);
-            if (s == MH_OK && MH_EnableHook(target) == MH_OK)
+            const PlatHookStatus s = PlatHookVTableMethod(appsVT, h.index, h.detour, h.original);
+            if (s == PLAT_HOOK_OK || s == PLAT_HOOK_ALREADY)
                 ++installed;
             else
                 UCOLOG("[UCOnline2] failed to hook ISteamApps::%s (vtable[%d]): %d",
-                    h.name, h.index, s);
+                    h.name, h.index, (int)s);
         }
 
         UCOLOG("[UCOnline2] ISteamApps DLC hooks: %d/%d installed (UnlockAll=%d, %d configured DLC)",

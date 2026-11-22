@@ -36,7 +36,7 @@
 // ============================================================
 #pragma once
 
-#include <windows.h>
+#include "platform.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
